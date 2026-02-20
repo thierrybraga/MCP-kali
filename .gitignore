@@ -1,0 +1,81 @@
+# Environment variables
+.env
+.env.local
+
+# Reports and sensitive data
+reports/
+targets/
+nmap-results/
+*.txt
+*.xml
+*.log
+*.pcap
+
+# Docker volumes
+metasploit-db/
+postgres-data/
+config/
+
+# Wordlists (too large)
+wordlists/rockyou.txt
+wordlists/seclists/
+
+# Node modules
+node_modules/
+mcp-server/node_modules/
+package-lock.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Credentials (never commit!)
+*.key
+*.pem
+credentials.txt
+passwords.txt
+users.txt
+
+# Database dumps
+*.sql
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+
+# Compiled files
+*.o
+*.a
+*.so
+*.exe
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Screenshots
+screenshots/
+*.png
+*.jpg
+*.jpeg

@@ -1,0 +1,29 @@
+{
+  "name": "kali-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for Kali Linux Penetration Testing Tools",
+  "keywords": [
+    "hydra",
+    "kali",
+    "mcp",
+    "nmap",
+    "pentest",
+    "security"
+  ],
+  "license": "MIT",
+  "author": "Thierry Braga",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
