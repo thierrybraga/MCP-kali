@@ -185,6 +185,34 @@ run_suite "Hydra Bruteforce"        "$TESTS_DIR/test-hydra.sh"     "$SKIP_SLOW"
 echo -e "${CYAN}${BOLD}═══ GRUPO 11: Exploitation ═══${NC}"
 run_suite "Metasploit"              "$TESTS_DIR/test-metasploit.sh" "$SKIP_SLOW"
 
+# --- Grupo 12: Password Cracking ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 12: Password Cracking ═══${NC}"
+run_suite "Password Cracking"       "$TESTS_DIR/test-password-cracking.sh"
+
+# --- Grupo 13: Wireless ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 13: Wireless Tools ═══${NC}"
+run_suite "Wireless Tools"          "$TESTS_DIR/test-wireless.sh"
+
+# --- Grupo 14: Exploitation Frameworks ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 14: Exploitation Frameworks ═══${NC}"
+run_suite "Exploitation Frameworks" "$TESTS_DIR/test-exploitation.sh"
+
+# --- Grupo 15: Sniffing & MITM ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 15: Sniffing & MITM ═══${NC}"
+run_suite "Sniffing & MITM"         "$TESTS_DIR/test-sniffing.sh"
+
+# --- Grupo 16: Post-Exploitation ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 16: Post-Exploitation ═══${NC}"
+run_suite "Post-Exploitation"       "$TESTS_DIR/test-post-exploitation.sh"
+
+# --- Grupo 17: Forensics & Reverse Engineering ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 17: Forensics & Reverse Engineering ═══${NC}"
+run_suite "Forensics & RE"          "$TESTS_DIR/test-forensics.sh"
+
+# --- Grupo 18: Active Directory & Network ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 18: Active Directory & Network ═══${NC}"
+run_suite "AD & Network"            "$TESTS_DIR/test-ad-network.sh"
+
 # ============================================================
 # RELATÓRIO FINAL
 # ============================================================

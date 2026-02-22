@@ -519,6 +519,22 @@ const toolRunner = {
   strings: { template: "strings {options} {target}", category: "forensics", description: "Binary string extraction", requiresTarget: true },
   exiftool: { template: "exiftool {options} {target}", category: "forensics", description: "Metadata extraction", requiresTarget: true },
   dalfox: { template: "dalfox url {target} {options}", category: "bugbounty", description: "XSS scanner", requiresTarget: true },
+  // Password cracking
+  medusa: { template: "medusa {options}", category: "password", description: "Parallel network login auditor", requiresTarget: false },
+  john: { template: "john {options} {target}", category: "password", description: "Password hash cracker", requiresTarget: true },
+  hashcat: { template: "hashcat {options} {target}", category: "password", description: "GPU-accelerated password cracker", requiresTarget: true },
+  // Network / AD
+  crackmapexec: { template: "crackmapexec {options} {target}", category: "network", description: "AD and SMB testing", requiresTarget: false },
+  responder: { template: "responder {options}", category: "network", description: "LLMNR/NBT-NS poisoning", requiresTarget: false },
+  "bloodhound-python": { template: "bloodhound-python {options}", category: "ad", description: "Active Directory attack path collection", requiresTarget: false },
+  ldapdomaindump: { template: "ldapdomaindump {options} {target}", category: "ad", description: "LDAP domain enumeration", requiresTarget: true },
+  impacket: { template: "python3 /usr/share/doc/python3-impacket/examples/{options}", category: "network", description: "Network protocol scripts (impacket)", requiresTarget: false },
+  // Wireless
+  "aircrack-ng": { template: "aircrack-ng {options} {target}", category: "wireless", description: "WEP/WPA cracking suite", requiresTarget: false },
+  reaver: { template: "reaver {options}", category: "wireless", description: "WPS PIN brute force", requiresTarget: false },
+  "airmon-ng": { template: "airmon-ng {options}", category: "wireless", description: "Monitor mode manager", requiresTarget: false },
+  "airodump-ng": { template: "airodump-ng {options}", category: "wireless", description: "Wireless packet capture", requiresTarget: false },
+  "aireplay-ng": { template: "aireplay-ng {options}", category: "wireless", description: "Packet injection tool", requiresTarget: false },
 };
 
 const categoryTags = {
