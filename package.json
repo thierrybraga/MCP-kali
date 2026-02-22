@@ -15,7 +15,16 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "bash scripts/run-all-tests.sh",
+    "test:fast": "SKIP_SLOW=1 bash scripts/run-all-tests.sh",
+    "test:health": "bash scripts/tests/test-health.sh",
+    "test:skills": "bash scripts/tests/test-skills.sh",
+    "test:security": "bash scripts/tests/test-security.sh",
+    "test:pipeline": "bash scripts/tests/test-pipeline.sh",
+    "test:nmap": "bash scripts/tests/test-nmap.sh",
+    "test:web": "bash scripts/tests/test-web.sh",
+    "test:tools": "bash scripts/tests/test-tools-generic.sh"
   },
   "dependencies": {
     "express": "^4.18.2"

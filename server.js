@@ -608,6 +608,9 @@ app.get("/", (req, res) => {
       skill: "/api/skills/:tool",
       artifacts: "/api/artifacts",
       reportSummary: "/api/reports/summary/:filename",
+      nosqlmap: "/api/web/nosqlmap",
+      apiDocs: "/api-docs",
+      swaggerJson: "/swagger.json",
     },
   });
 });
@@ -1501,6 +1504,75 @@ app.get("/api/artifacts", async (req, res) => {
   res.json({ artifacts });
 });
 
+// ==================== API DOCS (Swagger UI) ====================
+app.get("/api-docs", (req, res) => {
+  res.setHeader("Content-Type", "text/html");
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kali MCP API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      url: "/swagger.json",
+      dom_id: "#swagger-ui",
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+      layout: "BaseLayout",
+      deepLinking: true,
+      defaultModelsExpandDepth: 1,
+      defaultModelExpandDepth: 2,
+      docExpansion: "list"
+    });
+  </script>
+</body>
+</html>`);
+});
+
+app.get("/swagger.json", async (req, res) => {
+  try {
+    const swaggerPath = path.join(__dirname, "swagger.json");
+    const content = await fs.readFile(swaggerPath, "utf-8");
+    res.setHeader("Content-Type", "application/json");
+    res.send(content);
+  } catch (_err) {
+    res.status(404).json({ error: "swagger.json not found" });
+  }
+});
+
+// ==================== NOSQLMAP ====================
+app.post("/api/web/nosqlmap", async (req, res) => {
+  const { url, options = "" } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ error: "URL is required" });
+  }
+
+  const command = `nosqlmap -u ${url} ${options}`;
+
+  const result = await executeCommand(command, 600000);
+  const report = await saveReport("nosqlmap", url, { command, ...result });
+  const payload = buildResponse({
+    success: result.success,
+    tool: "nosqlmap",
+    target: url,
+    command,
+    result,
+    report: report.filename,
+    artifacts: [report.artifact],
+    meta: { options },
+  });
+  if (!result.success) {
+    return res.status(500).json(payload);
+  }
+  return res.json(payload);
+});
+
 // Error handling
 app.use((err, req, res, _next) => {
   console.error(err.stack);
@@ -1513,6 +1585,7 @@ app.listen(PORT, HOST, () => {
   console.log("  Kali MCP Pentest Server");
   console.log("=".repeat(50));
   console.log(`Server running on http://${HOST}:${PORT}`);
-  console.log("API Documentation: http://" + HOST + ":" + PORT);
+  console.log(`API Documentation: http://${HOST}:${PORT}/api-docs`);
+  console.log(`Swagger JSON:      http://${HOST}:${PORT}/swagger.json`);
   console.log("=".repeat(50));
 });
