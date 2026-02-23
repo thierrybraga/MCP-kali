@@ -273,8 +273,8 @@ RUN chmod +x /root/scripts/*.sh 2>/dev/null || true
 # Configurar metasploit database
 RUN msfdb init 2>/dev/null || true
 
-# Criar script de inicialização
-RUN echo '#!/bin/bash\n\
+# Criar script de inicialização usando printf para garantir newlines corretas
+RUN printf '#!/bin/bash\n\
 echo "================================================="\n\
 echo "  Kali Linux MCP Pentest Environment"\n\
 echo "  Version: 1.0"\n\
@@ -287,14 +287,12 @@ echo "  - sqlmap, wpscan (Web testing)"\n\
 echo "  - metasploit (Exploitation)"\n\
 echo "  - aircrack-ng (Wireless)"\n\
 echo ""\n\
-echo "MCP Server: http://localhost:3000"\n\
+echo "MCP Server: http://localhost:${MCP_PORT:-3000}"\n\
 echo "Reports: /root/reports"\n\
 echo "Scripts: /root/scripts"\n\
 echo "================================================="\n\
 echo ""\n\
-# Iniciar MCP server em background\n\
 cd /opt/mcp-server && node server.js &\n\
-# Manter container rodando\n\
 exec /bin/bash\n\
 ' > /root/start.sh && chmod +x /root/start.sh
 
