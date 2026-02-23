@@ -25,9 +25,12 @@ const TOR_START_COMMAND =
 const OPENCLAW_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || "";
 const OPENCLAW_REGISTER_PATH = process.env.OPENCLAW_REGISTER_PATH || "/api/mcp/register";
 const OPENCLAW_HEARTBEAT_PATH = process.env.OPENCLAW_HEARTBEAT_PATH || "/api/mcp/heartbeat";
+const OPENCLAW_REGISTER_METHOD = (process.env.OPENCLAW_REGISTER_METHOD || "POST").toUpperCase();
+const OPENCLAW_HEARTBEAT_METHOD = (process.env.OPENCLAW_HEARTBEAT_METHOD || "POST").toUpperCase();
 const OPENCLAW_HEARTBEAT_INTERVAL_MS = Number(process.env.OPENCLAW_HEARTBEAT_INTERVAL_MS || 30000);
 const OPENCLAW_CONNECT_TIMEOUT_MS = Number(process.env.OPENCLAW_CONNECT_TIMEOUT_MS || 5000);
 const OPENCLAW_REQUIRE_GATEWAY = String(process.env.OPENCLAW_REQUIRE_GATEWAY || "false").toLowerCase() === "true";
+const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
 const MCP_ADVERTISED_URL = process.env.MCP_ADVERTISED_URL || process.env.MCP_PUBLIC_URL || "";
 
 // Middleware
@@ -63,11 +66,26 @@ function resolveAdvertisedUrl() {
   return `http://${host}:${PORT}`;
 }
 
-function httpRequestJson(method, url, payload, timeoutMs = 5000) {
+function appendQuery(url, payload) {
+  const target = new URL(url);
+  if (!payload || typeof payload !== "object") {
+    return target.toString();
+  }
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+    target.searchParams.set(key, String(value));
+  }
+  return target.toString();
+}
+
+function httpRequestJson(method, url, payload, timeoutMs = 5000, extraHeaders = {}) {
   return new Promise((resolve) => {
-    const target = new URL(url);
+    const finalUrl = method === "GET" ? appendQuery(url, payload) : url;
+    const target = new URL(finalUrl);
     const transport = target.protocol === "https:" ? require("https") : require("http");
-    const data = payload ? JSON.stringify(payload) : "";
+    const data = payload && method !== "GET" ? JSON.stringify(payload) : "";
     const options = {
       method,
       hostname: target.hostname,
@@ -76,6 +94,7 @@ function httpRequestJson(method, url, payload, timeoutMs = 5000) {
       headers: {
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(data),
+        ...extraHeaders,
       },
       timeout: timeoutMs,
     };
@@ -123,11 +142,28 @@ async function registerWithOpenClaw() {
     version: "1.0.0",
     timestamp: new Date().toISOString(),
   };
-  const result = await httpRequestJson("POST", registerUrl, payload, OPENCLAW_CONNECT_TIMEOUT_MS);
+  const headers = OPENCLAW_GATEWAY_TOKEN
+    ? {
+        Authorization: `Bearer ${OPENCLAW_GATEWAY_TOKEN}`,
+        "X-OpenClaw-Token": OPENCLAW_GATEWAY_TOKEN,
+      }
+    : {};
+  const result = await httpRequestJson(
+    OPENCLAW_REGISTER_METHOD,
+    registerUrl,
+    payload,
+    OPENCLAW_CONNECT_TIMEOUT_MS,
+    headers
+  );
   if (result.ok) {
     logEvent("info", "openclaw_register_ok", { url: registerUrl, statusCode: result.statusCode });
   } else {
-    logEvent("error", "openclaw_register_failed", { url: registerUrl, statusCode: result.statusCode, error: result.error });
+    logEvent("error", "openclaw_register_failed", {
+      url: registerUrl,
+      statusCode: result.statusCode,
+      error: result.error,
+      responseBody: result.body ? result.body.slice(0, 500) : "",
+    });
   }
   return result;
 }
@@ -144,11 +180,28 @@ async function sendOpenClawHeartbeat() {
     status: "healthy",
     timestamp: new Date().toISOString(),
   };
-  const result = await httpRequestJson("POST", heartbeatUrl, payload, OPENCLAW_CONNECT_TIMEOUT_MS);
+  const headers = OPENCLAW_GATEWAY_TOKEN
+    ? {
+        Authorization: `Bearer ${OPENCLAW_GATEWAY_TOKEN}`,
+        "X-OpenClaw-Token": OPENCLAW_GATEWAY_TOKEN,
+      }
+    : {};
+  const result = await httpRequestJson(
+    OPENCLAW_HEARTBEAT_METHOD,
+    heartbeatUrl,
+    payload,
+    OPENCLAW_CONNECT_TIMEOUT_MS,
+    headers
+  );
   if (result.ok) {
     logEvent("info", "openclaw_heartbeat_ok", { url: heartbeatUrl, statusCode: result.statusCode });
   } else {
-    logEvent("error", "openclaw_heartbeat_failed", { url: heartbeatUrl, statusCode: result.statusCode, error: result.error });
+    logEvent("error", "openclaw_heartbeat_failed", {
+      url: heartbeatUrl,
+      statusCode: result.statusCode,
+      error: result.error,
+      responseBody: result.body ? result.body.slice(0, 500) : "",
+    });
   }
   return result;
 }
