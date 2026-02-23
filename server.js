@@ -22,6 +22,13 @@ const TOR_DDG_ONION =
 const TOR_START_COMMAND =
   process.env.TOR_START_COMMAND ||
   "tor --SocksPort 9050 --ControlPort 9051 --DataDirectory /tmp/tor --RunAsDaemon 1";
+const OPENCLAW_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || "";
+const OPENCLAW_REGISTER_PATH = process.env.OPENCLAW_REGISTER_PATH || "/api/mcp/register";
+const OPENCLAW_HEARTBEAT_PATH = process.env.OPENCLAW_HEARTBEAT_PATH || "/api/mcp/heartbeat";
+const OPENCLAW_HEARTBEAT_INTERVAL_MS = Number(process.env.OPENCLAW_HEARTBEAT_INTERVAL_MS || 30000);
+const OPENCLAW_CONNECT_TIMEOUT_MS = Number(process.env.OPENCLAW_CONNECT_TIMEOUT_MS || 5000);
+const OPENCLAW_REQUIRE_GATEWAY = String(process.env.OPENCLAW_REQUIRE_GATEWAY || "false").toLowerCase() === "true";
+const MCP_ADVERTISED_URL = process.env.MCP_ADVERTISED_URL || process.env.MCP_PUBLIC_URL || "";
 
 // Middleware
 app.use(express.json());
@@ -46,6 +53,126 @@ function logEvent(level, message, data = {}) {
     ...data,
   };
   console.log(JSON.stringify(payload));
+}
+
+function resolveAdvertisedUrl() {
+  if (MCP_ADVERTISED_URL) {
+    return MCP_ADVERTISED_URL;
+  }
+  const host = HOST === "0.0.0.0" ? process.env.HOSTNAME || "kali-pentest" : HOST;
+  return `http://${host}:${PORT}`;
+}
+
+function httpRequestJson(method, url, payload, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const target = new URL(url);
+    const transport = target.protocol === "https:" ? require("https") : require("http");
+    const data = payload ? JSON.stringify(payload) : "";
+    const options = {
+      method,
+      hostname: target.hostname,
+      port: target.port || (target.protocol === "https:" ? 443 : 80),
+      path: `${target.pathname}${target.search}`,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(data),
+      },
+      timeout: timeoutMs,
+    };
+    const req = transport.request(options, (res) => {
+      let body = "";
+      res.on("data", (chunk) => {
+        body += chunk;
+      });
+      res.on("end", () => {
+        resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, statusCode: res.statusCode, body });
+      });
+    });
+    req.on("error", (error) => resolve({ ok: false, error: error.message }));
+    req.on("timeout", () => {
+      req.destroy(new Error("timeout"));
+    });
+    if (data.length > 0) {
+      req.write(data);
+    }
+    req.end();
+  });
+}
+
+async function checkGatewayReachable(baseUrl) {
+  try {
+    const target = new URL(baseUrl);
+    const dns = require("dns").promises;
+    await dns.lookup(target.hostname);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function registerWithOpenClaw() {
+  if (!OPENCLAW_GATEWAY_URL) {
+    return { ok: true, skipped: true };
+  }
+  const advertisedUrl = resolveAdvertisedUrl();
+  const registerUrl = new URL(OPENCLAW_REGISTER_PATH, OPENCLAW_GATEWAY_URL).toString();
+  const payload = {
+    name: "kali-mcp",
+    url: advertisedUrl,
+    healthUrl: `${advertisedUrl}/health`,
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+  };
+  const result = await httpRequestJson("POST", registerUrl, payload, OPENCLAW_CONNECT_TIMEOUT_MS);
+  if (result.ok) {
+    logEvent("info", "openclaw_register_ok", { url: registerUrl, statusCode: result.statusCode });
+  } else {
+    logEvent("error", "openclaw_register_failed", { url: registerUrl, statusCode: result.statusCode, error: result.error });
+  }
+  return result;
+}
+
+async function sendOpenClawHeartbeat() {
+  if (!OPENCLAW_GATEWAY_URL) {
+    return { ok: true, skipped: true };
+  }
+  const advertisedUrl = resolveAdvertisedUrl();
+  const heartbeatUrl = new URL(OPENCLAW_HEARTBEAT_PATH, OPENCLAW_GATEWAY_URL).toString();
+  const payload = {
+    name: "kali-mcp",
+    url: advertisedUrl,
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+  };
+  const result = await httpRequestJson("POST", heartbeatUrl, payload, OPENCLAW_CONNECT_TIMEOUT_MS);
+  if (result.ok) {
+    logEvent("info", "openclaw_heartbeat_ok", { url: heartbeatUrl, statusCode: result.statusCode });
+  } else {
+    logEvent("error", "openclaw_heartbeat_failed", { url: heartbeatUrl, statusCode: result.statusCode, error: result.error });
+  }
+  return result;
+}
+
+async function startOpenClawHeartbeat() {
+  if (!OPENCLAW_GATEWAY_URL) {
+    return;
+  }
+  const reachable = await checkGatewayReachable(OPENCLAW_GATEWAY_URL);
+  if (!reachable) {
+    logEvent("error", "openclaw_gateway_unreachable", { url: OPENCLAW_GATEWAY_URL });
+    if (OPENCLAW_REQUIRE_GATEWAY) {
+      process.exit(1);
+    }
+  }
+  const registered = await registerWithOpenClaw();
+  if (!registered.ok && OPENCLAW_REQUIRE_GATEWAY) {
+    process.exit(1);
+  }
+  if (OPENCLAW_HEARTBEAT_INTERVAL_MS > 0) {
+    setInterval(() => {
+      sendOpenClawHeartbeat();
+    }, OPENCLAW_HEARTBEAT_INTERVAL_MS);
+  }
 }
 
 app.use((req, res, next) => {
@@ -1604,4 +1731,5 @@ app.listen(PORT, HOST, () => {
   console.log(`API Documentation: http://${HOST}:${PORT}/api-docs`);
   console.log(`Swagger JSON:      http://${HOST}:${PORT}/swagger.json`);
   console.log("=".repeat(50));
+  startOpenClawHeartbeat();
 });
