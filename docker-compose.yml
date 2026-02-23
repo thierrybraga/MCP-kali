@@ -1,14 +1,14 @@
 services:
   kali-pentest:
     build:
-      context: .
+      context: ./MCP-kali
       dockerfile: Dockerfile
     container_name: kali-mcp-pentest
     hostname: kali-pentest
     image: kali-mcp:latest
 
     env_file:
-      - .env
+      - openclaw/.env
 
     # Privilégios necessários para ferramentas de pentest (network scan, wireless, etc.)
     privileged: true
@@ -23,13 +23,13 @@ services:
       - "8080:8080"                # Web proxy/tools
 
     volumes:
-      - ./reports:/root/reports
-      - ./scripts:/root/scripts
-      - ./targets:/root/targets
-      - ./wordlists:/root/wordlists
-      - ./nmap-results:/root/nmap-results
-      - ./config:/root/.config
-      - ./skills:/root/skills
+      - ./MCP-kali/reports:/root/reports
+      - ./MCP-kali/scripts:/root/scripts
+      - ./MCP-kali/targets:/root/targets
+      - ./MCP-kali/wordlists:/root/wordlists
+      - ./MCP-kali/nmap-results:/root/nmap-results
+      - ./MCP-kali/config:/root/.config
+      - ./MCP-kali/skills:/root/skills
       - metasploit-db:/var/lib/postgresql
 
     environment:
@@ -71,7 +71,7 @@ services:
     image: postgres:16-alpine
     container_name: kali-postgres
     env_file:
-      - .env
+      - openclaw/.env
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-msf}
       - POSTGRES_USER=${POSTGRES_USER:-msf}

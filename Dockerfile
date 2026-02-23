@@ -12,7 +12,7 @@ ENV PATH=$PATH:/root/go/bin
 
 # Atualizar sistema e instalar ferramentas essenciais
 RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y \
+    for pkg in \
     nmap \
     masscan \
     netcat-traditional \
@@ -62,6 +62,7 @@ RUN apt-get update && apt-get upgrade -y && \
     golang-go \
     wordlists \
     seclists \
+    ; do apt-get install -y "$pkg" || true; done \
     && for pkg in \
     golang-go \
     kali-tools-information-gathering \
