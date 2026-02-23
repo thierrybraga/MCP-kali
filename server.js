@@ -4,6 +4,7 @@ const util = require("util");
 const fs = require("fs").promises;
 const crypto = require("crypto");
 const path = require("path");
+const os = require("os");
 
 const execPromise = util.promisify(exec);
 const app = express();
@@ -31,7 +32,14 @@ const OPENCLAW_HEARTBEAT_INTERVAL_MS = Number(process.env.OPENCLAW_HEARTBEAT_INT
 const OPENCLAW_CONNECT_TIMEOUT_MS = Number(process.env.OPENCLAW_CONNECT_TIMEOUT_MS || 5000);
 const OPENCLAW_REQUIRE_GATEWAY = String(process.env.OPENCLAW_REQUIRE_GATEWAY || "false").toLowerCase() === "true";
 const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
+const OPENCLAW_GATEWAY_TRANSPORT = (process.env.OPENCLAW_GATEWAY_TRANSPORT || "auto").toLowerCase();
+const OPENCLAW_DEVICE_IDENTITY_PATH =
+  process.env.OPENCLAW_DEVICE_IDENTITY_PATH ||
+  path.join(os.tmpdir(), "openclaw-device-identity.json");
 const MCP_ADVERTISED_URL = process.env.MCP_ADVERTISED_URL || process.env.MCP_PUBLIC_URL || "";
+let openClawTransportMode = OPENCLAW_GATEWAY_TRANSPORT === "auto" ? null : OPENCLAW_GATEWAY_TRANSPORT;
+let openClawDeviceIdentity = null;
+let openClawDeviceIdentityPromise = null;
 
 // Middleware
 app.use(express.json());
@@ -80,6 +88,130 @@ function appendQuery(url, payload) {
   return target.toString();
 }
 
+function base64UrlEncode(data) {
+  return Buffer.from(data)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function base64UrlDecode(input) {
+  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  return Buffer.from(padded, "base64");
+}
+
+function buildDeviceAuthPayload(params) {
+  const version = params.version ?? (params.nonce ? "v2" : "v1");
+  const scopes = params.scopes.join(",");
+  const token = params.token ?? "";
+  const base = [
+    version,
+    params.deviceId,
+    params.clientId,
+    params.clientMode,
+    params.role,
+    scopes,
+    String(params.signedAtMs),
+    token,
+  ];
+  if (version === "v2") {
+    base.push(params.nonce ?? "");
+  }
+  return base.join("|");
+}
+
+async function loadOrCreateOpenClawDeviceIdentity() {
+  if (openClawDeviceIdentity) {
+    return openClawDeviceIdentity;
+  }
+  if (openClawDeviceIdentityPromise) {
+    return openClawDeviceIdentityPromise;
+  }
+  openClawDeviceIdentityPromise = (async () => {
+    try {
+      const raw = await fs.readFile(OPENCLAW_DEVICE_IDENTITY_PATH, "utf8");
+      const parsed = JSON.parse(raw);
+      if (
+        parsed?.version === 1 &&
+        typeof parsed.deviceId === "string" &&
+        typeof parsed.publicKey === "string" &&
+        typeof parsed.privateKey === "string"
+      ) {
+        openClawDeviceIdentity = parsed;
+        return parsed;
+      }
+    } catch (_error) {}
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+    const publicJwk = publicKey.export({ format: "jwk" });
+    const privateJwk = privateKey.export({ format: "jwk" });
+    const publicRaw = base64UrlDecode(publicJwk.x);
+    const deviceId = crypto.createHash("sha256").update(publicRaw).digest("hex");
+    const identity = {
+      version: 1,
+      deviceId,
+      publicKey: publicJwk.x,
+      privateKey: privateJwk.d,
+      createdAtMs: Date.now(),
+    };
+    try {
+      await fs.writeFile(OPENCLAW_DEVICE_IDENTITY_PATH, JSON.stringify(identity));
+    } catch (_error) {}
+    openClawDeviceIdentity = identity;
+    return identity;
+  })();
+  return openClawDeviceIdentityPromise;
+}
+
+async function signDevicePayload(privateKeyBase64Url, payload) {
+  const data = new TextEncoder().encode(payload);
+  const key = crypto.createPrivateKey({
+    key: {
+      kty: "OKP",
+      crv: "Ed25519",
+      d: privateKeyBase64Url,
+      x: openClawDeviceIdentity?.publicKey,
+    },
+    format: "jwk",
+  });
+  const sig = crypto.sign(null, data, key);
+  return base64UrlEncode(sig);
+}
+
+function isHtmlResponse(body) {
+  if (!body) {
+    return false;
+  }
+  const trimmed = body.trim().toLowerCase();
+  return trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html");
+}
+
+function resolveGatewayWebSocketUrl(baseUrl) {
+  const target = new URL(baseUrl);
+  const protocol = target.protocol === "https:" ? "wss:" : target.protocol === "http:" ? "ws:" : target.protocol;
+  target.protocol = protocol;
+  if (!target.pathname || target.pathname === "/") {
+    target.pathname = "/gateway";
+  }
+  return target.toString();
+}
+
+function resolveGatewayTransport() {
+  if (openClawTransportMode) {
+    return openClawTransportMode;
+  }
+  if (!OPENCLAW_GATEWAY_URL) {
+    return "http";
+  }
+  if (OPENCLAW_GATEWAY_URL.startsWith("ws://") || OPENCLAW_GATEWAY_URL.startsWith("wss://")) {
+    openClawTransportMode = "ws";
+    return "ws";
+  }
+  openClawTransportMode = "http";
+  return "http";
+}
+
 function httpRequestJson(method, url, payload, timeoutMs = 5000, extraHeaders = {}) {
   return new Promise((resolve) => {
     const finalUrl = method === "GET" ? appendQuery(url, payload) : url;
@@ -118,6 +250,185 @@ function httpRequestJson(method, url, payload, timeoutMs = 5000, extraHeaders = 
   });
 }
 
+async function buildGatewayConnectPayload(connectNonce) {
+  const role = "operator";
+  const scopes = ["operator.admin", "operator.approvals", "operator.pairing"];
+  const auth = OPENCLAW_GATEWAY_TOKEN ? { token: OPENCLAW_GATEWAY_TOKEN } : undefined;
+  const identity = await loadOrCreateOpenClawDeviceIdentity();
+  const signedAtMs = Date.now();
+  const deviceAuthPayload = buildDeviceAuthPayload({
+    deviceId: identity.deviceId,
+    clientId: "gateway-client",
+    clientMode: "backend",
+    role,
+    scopes,
+    signedAtMs,
+    token: OPENCLAW_GATEWAY_TOKEN || null,
+    nonce: connectNonce ?? null,
+    version: connectNonce ? "v2" : "v1",
+  });
+  const signature = await signDevicePayload(identity.privateKey, deviceAuthPayload);
+  const device = {
+    id: identity.deviceId,
+    publicKey: identity.publicKey,
+    signature,
+    signedAt: signedAtMs,
+    nonce: connectNonce ?? undefined,
+  };
+  return {
+    minProtocol: 3,
+    maxProtocol: 3,
+    client: {
+      id: "gateway-client",
+      version: "1.0.0",
+      platform: process.platform,
+      mode: "backend",
+      instanceId: process.env.HOSTNAME || "kali-mcp",
+    },
+    role,
+    scopes,
+    device,
+    caps: [],
+    auth,
+    userAgent: "kali-mcp",
+    locale: "en-US",
+  };
+}
+
+function openClawGatewayConnect(wsUrl) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let pendingId = null;
+    let connectNonce = null;
+    let connectTimer = null;
+    const ws = new WebSocket(wsUrl);
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (connectTimer) {
+        clearTimeout(connectTimer);
+      }
+      try {
+        ws.close();
+      } catch (_error) {}
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      finish({ ok: false, error: "timeout" });
+    }, OPENCLAW_CONNECT_TIMEOUT_MS);
+    const sendConnect = async () => {
+      pendingId = crypto.randomUUID();
+      let params;
+      try {
+        params = await buildGatewayConnectPayload(connectNonce);
+      } catch (error) {
+        finish({ ok: false, error: error?.message || "connect_payload_failed" });
+        return;
+      }
+      if (ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      const frame = {
+        type: "req",
+        id: pendingId,
+        method: "connect",
+        params,
+      };
+      ws.send(JSON.stringify(frame));
+    };
+    ws.addEventListener("open", () => {
+      connectTimer = setTimeout(() => {
+        void sendConnect();
+      }, 500);
+    });
+    ws.addEventListener("message", (event) => {
+      let raw = "";
+      if (typeof event.data === "string") {
+        raw = event.data;
+      } else if (event.data) {
+        raw = Buffer.from(event.data).toString("utf8");
+      }
+      if (!raw) {
+        return;
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (_error) {
+        return;
+      }
+      if (parsed?.type === "event" && parsed?.event === "connect.challenge") {
+        const nonce = parsed?.payload?.nonce;
+        connectNonce = typeof nonce === "string" ? nonce : null;
+        if (connectTimer) {
+          clearTimeout(connectTimer);
+          connectTimer = null;
+        }
+        void sendConnect();
+        return;
+      }
+      if (parsed?.type === "hello-ok") {
+        finish({ ok: true, response: parsed });
+        return;
+      }
+      if (parsed?.type === "res" && parsed?.id === pendingId) {
+        if (parsed.ok) {
+          finish({ ok: true, response: parsed.payload });
+        } else {
+          finish({ ok: false, error: parsed?.error?.message || "connect_failed", response: parsed });
+        }
+      }
+    });
+    ws.addEventListener("error", (err) => {
+      finish({ ok: false, error: err?.message || "socket_error" });
+    });
+    ws.addEventListener("close", (ev) => {
+      if (!settled) {
+        finish({ ok: false, error: `socket_closed:${ev.code}:${ev.reason || "unknown"}` });
+      }
+    });
+  });
+}
+
+async function registerWithOpenClawWebSocket() {
+  if (!OPENCLAW_GATEWAY_URL) {
+    return { ok: true, skipped: true };
+  }
+  const wsUrl = resolveGatewayWebSocketUrl(OPENCLAW_GATEWAY_URL);
+  const result = await openClawGatewayConnect(wsUrl);
+  if (result.ok) {
+    logEvent("info", "openclaw_register_ok", { url: wsUrl, transport: "ws" });
+  } else {
+    logEvent("error", "openclaw_register_failed", {
+      url: wsUrl,
+      transport: "ws",
+      error: result.error,
+    });
+  }
+  return result;
+}
+
+async function sendOpenClawHeartbeatWebSocket() {
+  if (!OPENCLAW_GATEWAY_URL) {
+    return { ok: true, skipped: true };
+  }
+  const wsUrl = resolveGatewayWebSocketUrl(OPENCLAW_GATEWAY_URL);
+  const result = await openClawGatewayConnect(wsUrl);
+  if (result.ok) {
+    logEvent("info", "openclaw_heartbeat_ok", { url: wsUrl, transport: "ws" });
+  } else {
+    logEvent("error", "openclaw_heartbeat_failed", {
+      url: wsUrl,
+      transport: "ws",
+      error: result.error,
+    });
+  }
+  return result;
+}
+
 async function checkGatewayReachable(baseUrl) {
   try {
     const target = new URL(baseUrl);
@@ -132,6 +443,9 @@ async function checkGatewayReachable(baseUrl) {
 async function registerWithOpenClaw() {
   if (!OPENCLAW_GATEWAY_URL) {
     return { ok: true, skipped: true };
+  }
+  if (resolveGatewayTransport() === "ws") {
+    return registerWithOpenClawWebSocket();
   }
   const advertisedUrl = resolveAdvertisedUrl();
   const registerUrl = new URL(OPENCLAW_REGISTER_PATH, OPENCLAW_GATEWAY_URL).toString();
@@ -165,12 +479,20 @@ async function registerWithOpenClaw() {
       responseBody: result.body ? result.body.slice(0, 500) : "",
     });
   }
+  if (!result.ok && (result.statusCode === 405 || isHtmlResponse(result.body))) {
+    logEvent("info", "openclaw_register_ws_fallback", { url: registerUrl });
+    openClawTransportMode = "ws";
+    return registerWithOpenClawWebSocket();
+  }
   return result;
 }
 
 async function sendOpenClawHeartbeat() {
   if (!OPENCLAW_GATEWAY_URL) {
     return { ok: true, skipped: true };
+  }
+  if (resolveGatewayTransport() === "ws") {
+    return sendOpenClawHeartbeatWebSocket();
   }
   const advertisedUrl = resolveAdvertisedUrl();
   const heartbeatUrl = new URL(OPENCLAW_HEARTBEAT_PATH, OPENCLAW_GATEWAY_URL).toString();
@@ -202,6 +524,11 @@ async function sendOpenClawHeartbeat() {
       error: result.error,
       responseBody: result.body ? result.body.slice(0, 500) : "",
     });
+  }
+  if (!result.ok && (result.statusCode === 405 || isHtmlResponse(result.body))) {
+    logEvent("info", "openclaw_heartbeat_ws_fallback", { url: heartbeatUrl });
+    openClawTransportMode = "ws";
+    return sendOpenClawHeartbeatWebSocket();
   }
   return result;
 }

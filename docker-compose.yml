@@ -39,7 +39,9 @@ services:
       - MCP_HOST=0.0.0.0
       - MCP_ADVERTISED_URL=http://kali-pentest:3000
       - OPENCLAW_GATEWAY_URL=http://openclaw:18789
-      - OPENCLAW_REQUIRE_GATEWAY=true
+      - OPENCLAW_REQUIRE_GATEWAY=false
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
+      - OPENCLAW_DEVICE_IDENTITY_PATH=/root/.config/openclaw-device-identity.json
 
     restart: unless-stopped
     stdin_open: true
