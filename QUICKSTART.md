@@ -14,14 +14,14 @@ docker-compose build
 docker-compose up -d
 
 # Verificar se está rodando
-docker ps | grep kali-mcp
+docker ps | grep cleo-kali-mcp
 ```
 
 ### 2. Acesso
 
 ```bash
 # Entrar no container
-docker exec -it kali-mcp-pentest /bin/bash
+docker exec -it cleo-kali-mcp /bin/bash
 
 # Ou usar o Makefile
 make shell
@@ -138,8 +138,8 @@ ffuf -u https://example.com/FUZZ -w /usr/share/wordlists/dirb/common.txt
 - [ ] Container rodando: `docker ps | grep kali-mcp`
 - [ ] MCP Server respondendo: `curl http://localhost:3000/health`
 - [ ] Shell acessível: `make shell`
-- [ ] Nmap instalado: `docker exec kali-mcp-pentest nmap --version`
-- [ ] Wordlists disponíveis: `docker exec kali-mcp-pentest ls /root/wordlists/`
+- [ ] Nmap instalado: `docker exec cleo-kali-mcp nmap --version`
+- [ ] Wordlists disponíveis: `docker exec cleo-kali-mcp ls /root/wordlists/`
 
 ### Troubleshooting Rápido
 
@@ -155,8 +155,8 @@ docker-compose up -d
 **MCP Server não responde:**
 
 ```bash
-docker exec kali-mcp-pentest ps aux | grep node
-docker restart kali-mcp-pentest
+docker exec cleo-kali-mcp ps aux | grep node
+docker restart cleo-kali-mcp
 ```
 
 **Wordlists não encontradas:**
@@ -174,7 +174,7 @@ make wordlists
 make recon TARGET=192.168.1.0/24
 
 # Ver relatório
-docker exec kali-mcp-pentest cat /root/reports/*/SUMMARY_REPORT.txt
+docker exec cleo-kali-mcp cat /root/reports/*/SUMMARY_REPORT.txt
 ```
 
 ### 2. Teste de Aplicação Web
@@ -208,7 +208,7 @@ make bruteforce TARGET=192.168.1.100 SERVICE=ssh USER=admin
 make bruteforce TARGET=192.168.1.100 SERVICE=ftp USER=anonymous
 
 # MySQL
-docker exec kali-mcp-pentest /root/scripts/auto_bruteforce.sh \
+docker exec cleo-kali-mcp /root/scripts/auto_bruteforce.sh \
   192.168.1.100 mysql -u root -s 3306
 ```
 

@@ -10,6 +10,8 @@ const execPromise = util.promisify(exec);
 const app = express();
 const PORT = process.env.MCP_PORT || 3000;
 const HOST = process.env.MCP_HOST || "0.0.0.0";
+const { fetch } = require("undici");
+const OpenAI = require("openai");
 const RATE_LIMIT_WINDOW_MS = Number(process.env.MCP_RATE_LIMIT_WINDOW_MS || 60000);
 const RATE_LIMIT_MAX = Number(process.env.MCP_RATE_LIMIT_MAX || 120);
 const REPORTS_DIR = "/root/reports";
@@ -40,6 +42,20 @@ const MCP_ADVERTISED_URL = process.env.MCP_ADVERTISED_URL || process.env.MCP_PUB
 let openClawTransportMode = OPENCLAW_GATEWAY_TRANSPORT === "auto" ? null : OPENCLAW_GATEWAY_TRANSPORT;
 let openClawDeviceIdentity = null;
 let openClawDeviceIdentityPromise = null;
+const LLM_PROVIDER = (process.env.LLM_PROVIDER || "").toLowerCase();
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://host.docker.internal:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-3-opus-20240229";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-pro";
+const KIMI_API_KEY = process.env.KIMI_API_KEY || "";
+const KIMI_MODEL = process.env.KIMI_MODEL || "moonshot-v1-8k";
+const KIMI_BASE_URL = process.env.KIMI_BASE_URL || "https://api.moonshot.cn";
+const LLM_FALLBACK_PROVIDER = (process.env.LLM_FALLBACK_PROVIDER || "").toLowerCase();
+const LLM_FALLBACK_MODEL = process.env.LLM_FALLBACK_MODEL || "";
 
 // Middleware
 app.use(express.json());
@@ -64,6 +80,148 @@ function logEvent(level, message, data = {}) {
     ...data,
   };
   console.log(JSON.stringify(payload));
+}
+
+async function llmChat(messages, provider, model) {
+  const p = (provider || LLM_PROVIDER || "ollama").toLowerCase();
+  let result = null;
+  if (p === "openai") {
+    if (!OPENAI_API_KEY) {
+      result = { ok: false, error: "OPENAI_API_KEY missing" };
+    } else {
+      const client = new OpenAI({ apiKey: OPENAI_API_KEY });
+      const r = await client.chat.completions.create({
+        model: model || OPENAI_MODEL,
+        messages,
+      });
+      const text = (r && r.choices && r.choices[0] && r.choices[0].message && r.choices[0].message.content) || "";
+      result = { ok: true, content: text, provider: "openai", model: model || OPENAI_MODEL };
+    }
+    if (result.ok) return result;
+  }
+  if (p === "anthropic") {
+    if (!ANTHROPIC_API_KEY) {
+      result = { ok: false, error: "ANTHROPIC_API_KEY missing" };
+    } else {
+      let systemMsg = "";
+      const mapped = [];
+      for (const m of messages || []) {
+        if (m.role === "system") {
+          systemMsg = String(m.content || "");
+        } else if (m.role === "user" || m.role === "assistant") {
+          mapped.push({ role: m.role, content: [{ type: "text", text: String(m.content || "") }] });
+        }
+      }
+      const body = {
+        model: model || ANTHROPIC_MODEL,
+        messages: mapped,
+        max_tokens: 1000,
+      };
+      if (systemMsg) {
+        body.system = systemMsg;
+      }
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        result = { ok: false, error: `anthropic ${resp.status}` };
+      } else {
+        const data = await resp.json();
+        const c0 = Array.isArray(data.content) && data.content[0] && data.content[0].text ? data.content[0].text : "";
+        result = { ok: true, content: c0, provider: "anthropic", model: model || ANTHROPIC_MODEL };
+      }
+    }
+    if (result.ok) return result;
+  }
+  if (p === "gemini") {
+    if (!GEMINI_API_KEY) {
+      result = { ok: false, error: "GEMINI_API_KEY missing" };
+    } else {
+      let contents = [];
+      let systemMsg = "";
+      for (const m of messages || []) {
+        if (m.role === "system") {
+          systemMsg = String(m.content || "");
+        } else if (m.role === "user") {
+          contents.push({ role: "user", parts: [{ text: String(m.content || "") }] });
+        } else if (m.role === "assistant") {
+          contents.push({ role: "model", parts: [{ text: String(m.content || "") }] });
+        }
+      }
+      const body = { contents };
+      if (systemMsg) {
+        body.systemInstruction = { parts: [{ text: systemMsg }] };
+      }
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model || GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+      const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!resp.ok) {
+        result = { ok: false, error: `gemini ${resp.status}` };
+      } else {
+        const data = await resp.json();
+        const c0 = data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text ? data.candidates[0].content.parts[0].text : "";
+        result = { ok: true, content: c0, provider: "gemini", model: model || GEMINI_MODEL };
+      }
+    }
+    if (result.ok) return result;
+  }
+  if (p === "kimi") {
+    if (!KIMI_API_KEY) {
+      result = { ok: false, error: "KIMI_API_KEY missing" };
+    } else {
+      const url = `${KIMI_BASE_URL}/v1/chat/completions`;
+      const body = { model: model || KIMI_MODEL, messages };
+      const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${KIMI_API_KEY}` }, body: JSON.stringify(body) });
+      if (!resp.ok) {
+        result = { ok: false, error: `kimi ${resp.status}` };
+      } else {
+        const data = await resp.json();
+        const text = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "";
+        result = { ok: true, content: text, provider: "kimi", model: model || KIMI_MODEL };
+      }
+    }
+    if (result.ok) return result;
+  }
+  {
+    const url = `${OLLAMA_BASE_URL}/api/chat`;
+    const body = {
+      model: model || OLLAMA_MODEL,
+      messages,
+      stream: false,
+    };
+    const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!resp.ok) {
+      result = { ok: false, error: `ollama ${resp.status}` };
+    } else {
+      const data = await resp.json();
+      const text = (data && data.message && data.message.content) || "";
+      result = { ok: true, content: text, provider: "ollama", model: model || OLLAMA_MODEL };
+    }
+  }
+  if (result && result.ok) {
+    return result;
+  }
+  if (LLM_FALLBACK_PROVIDER === "ollama") {
+    const url = `${OLLAMA_BASE_URL}/api/chat`;
+    const body = {
+      model: LLM_FALLBACK_MODEL || OLLAMA_MODEL,
+      messages,
+      stream: false,
+    };
+    const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!resp.ok) {
+      return { ok: false, error: `fallback_ollama ${resp.status}` };
+    }
+    const data = await resp.json();
+    const text = (data && data.message && data.message.content) || "";
+    return { ok: true, content: text, provider: "ollama", model: LLM_FALLBACK_MODEL || OLLAMA_MODEL };
+  }
+  return result || { ok: false, error: "llm_unavailable" };
 }
 
 function resolveAdvertisedUrl() {
@@ -1134,6 +1292,8 @@ app.get("/", (req, res) => {
       nosqlmap: "/api/web/nosqlmap",
       apiDocs: "/api-docs",
       swaggerJson: "/swagger.json",
+      llmChat: "/api/llm/chat",
+      llmPlan: "/api/llm/plan",
     },
   });
 });
@@ -1170,6 +1330,78 @@ app.post("/api/scan/nmap", async (req, res) => {
     return res.status(500).json(payload);
   }
   return res.json(payload);
+});
+
+app.post("/api/llm/chat", async (req, res) => {
+  try {
+    const { provider, model, messages, prompt, system } = req.body;
+    const msgs = Array.isArray(messages) && messages.length
+      ? messages
+      : [
+          { role: "system", content: system || "Você é um assistente MCP de pentest." },
+          { role: "user", content: prompt || "" },
+        ];
+    const r = await llmChat(msgs, provider, model);
+    if (!r.ok) {
+      return res.status(400).json({ error: r.error });
+    }
+    return res.json({ provider: r.provider, model: r.model, output: r.content });
+  } catch (err) {
+    return res.status(500).json({ error: "LLM chat failed", message: String(err && err.message ? err.message : err) });
+  }
+});
+
+app.post("/api/llm/plan", async (req, res) => {
+  try {
+    const { provider, model, prompt, execute = false } = req.body;
+    const sys = "Responda apenas JSON com campos: tool,target,options.";
+    const msgs = [
+      { role: "system", content: sys },
+      { role: "user", content: prompt || "" },
+    ];
+    const r = await llmChat(msgs, provider, model);
+    if (!r.ok) {
+      return res.status(400).json({ error: r.error });
+    }
+    let plan;
+    try {
+      plan = JSON.parse(r.content);
+    } catch (_e) {
+      return res.status(400).json({ error: "Invalid JSON from LLM", output: r.content });
+    }
+    if (!execute) {
+      return res.json({ provider: r.provider, model: r.model, plan });
+    }
+    const tool = plan.tool;
+    const target = plan.target || null;
+    const options = plan.options || "";
+    const cfg = toolRunner[tool];
+    if (!cfg) {
+      return res.status(400).json({ error: "Tool not supported", plan });
+    }
+    if (cfg.requiresTarget && !target) {
+      return res.status(400).json({ error: "Target is required", plan });
+    }
+    const command = buildToolCommand(tool, target, options);
+    const result = await executeCommand(command, 900000);
+    const report = await saveReport(tool, target || tool, { command, ...result });
+    const payload = buildResponse({
+      success: result.success,
+      tool,
+      target: target || null,
+      command,
+      result,
+      report: report.filename,
+      artifacts: [report.artifact],
+      meta: { options, provider: r.provider, model: r.model },
+    });
+    if (!result.success) {
+      return res.status(500).json({ plan, execution: payload });
+    }
+    return res.json({ plan, execution: payload });
+  } catch (err) {
+    return res.status(500).json({ error: "LLM plan failed", message: String(err && err.message ? err.message : err) });
+  }
 });
 
 // ==================== MASSCAN ====================

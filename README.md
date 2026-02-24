@@ -95,7 +95,7 @@ docker-compose up -d
 ### 5. Acessar o container
 
 ```bash
-docker exec -it kali-mcp-pentest /bin/bash
+docker exec -it cleo-kali-mcp /bin/bash
 ```
 
 ## 🔧 Uso
@@ -483,21 +483,21 @@ docker-compose build --no-cache
 
 ```bash
 # Verificar se está rodando
-docker exec kali-mcp-pentest ps aux | grep node
+docker exec cleo-kali-mcp ps aux | grep node
 
 # Reiniciar o server
-docker exec kali-mcp-pentest pkill node
-docker exec kali-mcp-pentest /root/start.sh
+docker exec cleo-kali-mcp pkill node
+docker exec cleo-kali-mcp /root/start.sh
 ```
 
 ### Wordlists não encontradas
 
 ```bash
 # Descompactar rockyou
-docker exec kali-mcp-pentest gunzip /root/wordlists/rockyou.txt.gz
+docker exec cleo-kali-mcp gunzip /root/wordlists/rockyou.txt.gz
 
 # Baixar SecLists
-docker exec kali-mcp-pentest git clone \
+docker exec cleo-kali-mcp git clone \
   https://github.com/danielmiessler/SecLists /root/wordlists/seclists
 ```
 
@@ -505,7 +505,7 @@ docker exec kali-mcp-pentest git clone \
 
 ```bash
 # Entrar como root
-docker exec -it -u root kali-mcp-pentest /bin/bash
+docker exec -it -u root cleo-kali-mcp /bin/bash
 ```
 
 ## 📊 Monitoramento
@@ -513,13 +513,13 @@ docker exec -it -u root kali-mcp-pentest /bin/bash
 ### Ver logs do MCP Server
 
 ```bash
-docker logs -f kali-mcp-pentest
+docker logs -f cleo-kali-mcp
 ```
 
 ### Verificar recursos
 
 ```bash
-docker stats kali-mcp-pentest
+docker stats cleo-kali-mcp
 ```
 
 ## 🔄 Atualizações

@@ -39,17 +39,17 @@ logs: ## Mostra logs do container
 
 shell: ## Acessa o shell do container
 	@echo "$(GREEN)Accessing Kali MCP shell...$(NC)"
-	docker exec -it kali-mcp-pentest /bin/bash
+	docker exec -it cleo-kali-mcp /bin/bash
 
 root-shell: ## Acessa shell como root
 	@echo "$(GREEN)Accessing Kali MCP shell as root...$(NC)"
-	docker exec -it -u root kali-mcp-pentest /bin/bash
+	docker exec -it -u root cleo-kali-mcp /bin/bash
 
 ps: ## Mostra processos do container
-	docker exec kali-mcp-pentest ps aux
+	docker exec cleo-kali-mcp ps aux
 
 stats: ## Mostra estatísticas de recursos
-	docker stats kali-mcp-pentest
+	docker stats cleo-kali-mcp
 
 clean: ## Remove containers, volumes e imagens
 	@echo "$(RED)Cleaning up...$(NC)"
@@ -71,8 +71,8 @@ test-nmap: ## Teste rápido do nmap via API
 		-d '{"target":"scanme.nmap.org","options":"-F"}' | jq .
 
 install-deps: ## Instala dependências adicionais no container
-	docker exec kali-mcp-pentest apt-get update
-	docker exec kali-mcp-pentest apt-get upgrade -y
+	docker exec cleo-kali-mcp apt-get update
+	docker exec cleo-kali-mcp apt-get upgrade -y
 
 backup: ## Backup de reports e configurações
 	@echo "$(BLUE)Creating backup...$(NC)"
@@ -89,7 +89,7 @@ update: ## Atualiza a imagem Kali
 wordlists: ## Prepara wordlists
 	@echo "$(BLUE)Preparing wordlists...$(NC)"
 	@mkdir -p wordlists
-	docker exec kali-mcp-pentest bash -c "gunzip /root/wordlists/*.gz 2>/dev/null || true"
+	docker exec cleo-kali-mcp bash -c "gunzip /root/wordlists/*.gz 2>/dev/null || true"
 	@echo "$(GREEN)Wordlists ready$(NC)"
 
 info: ## Mostra informações do ambiente
@@ -98,7 +98,7 @@ info: ## Mostra informações do ambiente
 	@echo "$(BLUE)╚═══════════════════════════════════════════════════════════╝$(NC)"
 	@echo ""
 	@echo "$(GREEN)Container Status:$(NC)"
-	@docker ps -a | grep kali-mcp || echo "  Not running"
+	@docker ps -a | grep cleo-kali-mcp || echo "  Not running"
 	@echo ""
 	@echo "$(GREEN)MCP Server:$(NC) http://localhost:3000"
 	@echo "$(GREEN)API Docs:$(NC)   http://localhost:3000/"
@@ -113,7 +113,7 @@ recon: ## Script de reconhecimento completo (usa TARGET=)
 		echo "Usage: make recon TARGET=192.168.1.0/24"; \
 	else \
 		echo "$(BLUE)Running full reconnaissance on $(TARGET)...$(NC)"; \
-		docker exec kali-mcp-pentest /root/scripts/full_recon.sh $(TARGET); \
+		docker exec cleo-kali-mcp /root/scripts/full_recon.sh $(TARGET); \
 	fi
 
 bruteforce: ## Brute force (usa TARGET=, SERVICE=, USER=)
@@ -121,6 +121,6 @@ bruteforce: ## Brute force (usa TARGET=, SERVICE=, USER=)
 		echo "$(RED)Error: TARGET and SERVICE required$(NC)"; \
 		echo "Usage: make bruteforce TARGET=192.168.1.100 SERVICE=ssh USER=root"; \
 	else \
-		docker exec kali-mcp-pentest /root/scripts/auto_bruteforce.sh \
+		docker exec cleo-kali-mcp /root/scripts/auto_bruteforce.sh \
 			$(TARGET) $(SERVICE) $(if $(USER),-u $(USER),); \
 	fi

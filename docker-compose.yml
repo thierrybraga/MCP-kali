@@ -1,14 +1,12 @@
 services:
   kali-pentest:
     build:
-      context: ./MCP-kali
+      context: .
       dockerfile: Dockerfile
-    container_name: kali-mcp-pentest
-    hostname: kali-pentest
+    container_name: cleo-kali-mcp
+    hostname: cleo-kali-mcp
     image: kali-mcp:latest
 
-    env_file:
-      - openclaw/.env
 
     # Privilégios necessários para ferramentas de pentest (network scan, wireless, etc.)
     privileged: true
@@ -37,11 +35,25 @@ services:
       - TERM=xterm-256color
       - MCP_PORT=${MCP_PORT:-3000}
       - MCP_HOST=0.0.0.0
-      - MCP_ADVERTISED_URL=http://kali-pentest:3000
-      - OPENCLAW_GATEWAY_URL=http://openclaw:18789
+      - MCP_ADVERTISED_URL=http://cleo-kali-mcp:3000
+      - OPENCLAW_GATEWAY_URL=
       - OPENCLAW_REQUIRE_GATEWAY=false
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - OPENCLAW_DEVICE_IDENTITY_PATH=/root/.config/openclaw-device-identity.json
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-3-opus-20240229}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-pro}
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+      - KIMI_MODEL=${KIMI_MODEL:-moonshot-v1-8k}
+      - KIMI_BASE_URL=${KIMI_BASE_URL:-https://api.moonshot.cn}
+      - LLM_FALLBACK_PROVIDER=${LLM_FALLBACK_PROVIDER:-ollama}
+      - LLM_FALLBACK_MODEL=${LLM_FALLBACK_MODEL:-}
 
     restart: unless-stopped
     stdin_open: true
@@ -69,9 +81,7 @@ services:
   # Opcional: PostgreSQL dedicado para Metasploit
   postgres:
     image: postgres:16-alpine
-    container_name: kali-postgres
-    env_file:
-      - openclaw/.env
+    container_name: cleo-kali-postgres
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-msf}
       - POSTGRES_USER=${POSTGRES_USER:-msf}
