@@ -1,4 +1,5 @@
-FROM kalilinux/kali-rolling:latest
+ARG KALI_IMAGE=kalilinux/kali-rolling:latest
+FROM ${KALI_IMAGE}
 
 # Metadata
 LABEL maintainer="Thierry Braga"
@@ -11,7 +12,7 @@ ENV GOPATH=/root/go
 ENV PATH=$PATH:/root/go/bin
 
 # Atualizar sistema e instalar ferramentas essenciais
-RUN apt-get update && apt-get upgrade -y && \
+RUN apt-get update && \
     for pkg in \
     nmap \
     masscan \
@@ -62,7 +63,7 @@ RUN apt-get update && apt-get upgrade -y && \
     golang-go \
     wordlists \
     seclists \
-    ; do apt-get install -y "$pkg" || true; done \
+    ; do apt-get install -y --no-install-recommends "$pkg" || true; done \
     && for pkg in \
     golang-go \
     kali-tools-information-gathering \
@@ -160,12 +161,12 @@ RUN apt-get update && apt-get upgrade -y && \
     bloodhound \
     ldapdomaindump \
     dalfox \
-    ; do apt-get install -y "$pkg" || true; done \
+    ; do apt-get install -y --no-install-recommends "$pkg" || true; done \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 RUN if command -v go >/dev/null 2>&1; then go install github.com/hahwul/dalfox/v2@latest && cp /root/go/bin/dalfox /usr/local/bin/dalfox; fi
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     arachni \
     cmsmap \
     droopescan \
@@ -194,7 +195,7 @@ RUN if ! command -v lazagne >/dev/null 2>&1; then \
     fi
 RUN if ! command -v rsf >/dev/null 2>&1; then pip3 install --break-system-packages git+https://github.com/threat9/routersploit.git; fi
 RUN if [ -f /usr/bin/rsf.py ] && ! command -v rsf >/dev/null 2>&1; then ln -s /usr/bin/rsf.py /usr/local/bin/rsf; fi
-RUN if ! command -v python2 >/dev/null 2>&1; then apt-get update && apt-get install -y python2 python2-dev python2-minimal && apt-get clean && rm -rf /var/lib/apt/lists/*; fi
+RUN if ! command -v python2 >/dev/null 2>&1; then apt-get update && apt-get install -y --no-install-recommends python2 python2-dev python2-minimal && apt-get clean && rm -rf /var/lib/apt/lists/*; fi
 RUN if ! command -v pip2 >/dev/null 2>&1; then curl -sS https://bootstrap.pypa.io/pip/2.7/get-pip.py -o /tmp/get-pip.py && python2 /tmp/get-pip.py && rm /tmp/get-pip.py; fi
 RUN if ! command -v arachni >/dev/null 2>&1; then \
     arachni_url="$(curl -s https://api.github.com/repos/Arachni/arachni/releases/latest | tr ',' '\n' | grep browser_download_url | grep 'linux-x86_64.tar.gz\"' | cut -d '\"' -f4 | head -n 1)"; \
@@ -248,7 +249,7 @@ RUN mkdir -p /opt/mcp-server \
     /root/targets \
     /root/nmap-results
 
-RUN dpkg -s wordlists >/dev/null 2>&1 || (apt-get update && apt-get install -y wordlists && apt-get clean && rm -rf /var/lib/apt/lists/*)
+RUN dpkg -s wordlists >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends wordlists && apt-get clean && rm -rf /var/lib/apt/lists/*)
 
 # Copiar wordlists para local acessível
 RUN cp -r /usr/share/wordlists/* /root/wordlists/ 2>/dev/null || true && \
@@ -266,7 +267,7 @@ COPY skills/ /root/skills/
 
 # Instalar dependências Node.js do MCP server
 WORKDIR /opt/mcp-server
-RUN npm install
+RUN npm install --omit=dev
 
 # Tornar scripts executáveis
 RUN chmod +x /root/scripts/*.sh 2>/dev/null || true

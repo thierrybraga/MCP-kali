@@ -12,6 +12,7 @@ const PORT = process.env.MCP_PORT || 3000;
 const HOST = process.env.MCP_HOST || "0.0.0.0";
 const { fetch } = require("undici");
 const OpenAI = require("openai");
+const MCP_ENV = (process.env.MCP_ENV || "lab").toLowerCase();
 const RATE_LIMIT_WINDOW_MS = Number(process.env.MCP_RATE_LIMIT_WINDOW_MS || 60000);
 const RATE_LIMIT_MAX = Number(process.env.MCP_RATE_LIMIT_MAX || 120);
 const REPORTS_DIR = "/root/reports";
@@ -73,12 +74,13 @@ app.use((req, res, next) => {
 const rateLimitState = new Map();
 
 function logEvent(level, message, data = {}) {
-  const payload = {
+  const payloadRaw = {
     timestamp: new Date().toISOString(),
     level,
     message,
     ...data,
   };
+  const payload = redactObject(payloadRaw);
   console.log(JSON.stringify(payload));
 }
 
@@ -1019,18 +1021,70 @@ async function addArtifact(artifact) {
   return artifact;
 }
 
+const SECRET_ENV_KEYS = [
+  "OPENAI_API_KEY",
+  "OPENCLAW_GATEWAY_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "KIMI_API_KEY",
+  "OPENROUTER_API_KEY_POOL",
+];
+const SECRET_VALUES = SECRET_ENV_KEYS.map((k) => process.env[k]).filter((v) => !!v);
+const SECRET_PATTERNS = [
+  /sk-[A-Za-z0-9_-]{20,}/g,
+  /zc_[A-Za-z0-9]{16,}/g,
+  /AIza[0-9A-Za-z\-_]{20,}/g,
+  /Bearer\s+[A-Za-z0-9\._\-]+/gi,
+  /\b[0-9a-f]{32,}\b/gi,
+];
+
+function redactText(value) {
+  if (typeof value !== "string" || !value) return value;
+  let out = value;
+  for (const secret of SECRET_VALUES) {
+    if (secret && typeof secret === "string" && secret.length > 6) {
+      out = out.split(secret).join("[REDACTED]");
+    }
+  }
+  for (const re of SECRET_PATTERNS) {
+    out = out.replace(re, "[REDACTED]");
+  }
+  return out;
+}
+
+function redactObject(obj) {
+  try {
+    return JSON.parse(
+      JSON.stringify(obj, (key, value) => {
+        if (typeof value === "string") {
+          return redactText(value);
+        }
+        return value;
+      })
+    );
+  } catch (_e) {
+    return obj;
+  }
+}
+
 async function saveReport(toolName, target, data) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const filename = `${toolName}_${target.replace(/[^a-zA-Z0-9]/g, "_")}_${timestamp}.txt`;
   const filepath = path.join(REPORTS_DIR, filename);
-  const content = JSON.stringify(data, null, 2);
+  const content = JSON.stringify(redactObject(data), null, 2);
   await fs.writeFile(filepath, content);
+  const category = getCategoryForTool(toolName);
+  const tags = getTags(category);
   const artifact = await addArtifact({
     hash: hashContent(content),
     tool: toolName,
     target,
     path: filepath,
     type: "report",
+    category,
+    tags,
+    commandHash: hashContent(String(data && data.command ? data.command : "")),
+    size: content.length,
     createdAt: new Date().toISOString(),
   });
   return { filename, artifact };
@@ -1038,12 +1092,16 @@ async function saveReport(toolName, target, data) {
 
 async function createFileArtifact(tool, target, filePath, type = "output") {
   const hash = await hashFile(filePath);
+  const category = getCategoryForTool(tool);
+  const tags = getTags(category);
   return addArtifact({
     hash,
     tool,
     target,
     path: filePath,
     type,
+    category,
+    tags,
     createdAt: new Date().toISOString(),
   });
 }
@@ -1053,9 +1111,9 @@ function buildResponse({ success, tool, target, command, result, report, artifac
     success,
     tool,
     target,
-    command,
-    stdout: result?.stdout || "",
-    stderr: result?.stderr || "",
+    command: redactText(command || ""),
+    stdout: redactText(result?.stdout || ""),
+    stderr: redactText(result?.stderr || ""),
     error: result?.error || null,
     report,
     artifacts,
@@ -1064,7 +1122,39 @@ function buildResponse({ success, tool, target, command, result, report, artifac
   };
 }
 
+function getCategoryForTool(name) {
+  const cfg = toolRunner[name];
+  return cfg && cfg.category ? cfg.category : "unknown";
+}
+
+function genJobId() {
+  return `job-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
+}
+
+const METRICS = {
+  latencies: {},
+};
+
+function recordLatency(route, ms) {
+  if (!METRICS.latencies[route]) {
+    METRICS.latencies[route] = [];
+  }
+  const arr = METRICS.latencies[route];
+  arr.push(ms);
+  if (arr.length > 50) {
+    arr.shift();
+  }
+}
+
+let SKILL_CACHE_TTL_MS = 60000;
+let SKILL_NAMES_CACHE = { data: [], ts: 0 };
+const SKILL_CONTENT_CACHE = new Map();
+
 async function listSkillNames() {
+  const now = Date.now();
+  if (now - SKILL_NAMES_CACHE.ts < SKILL_CACHE_TTL_MS && Array.isArray(SKILL_NAMES_CACHE.data) && SKILL_NAMES_CACHE.data.length >= 0) {
+    return SKILL_NAMES_CACHE.data;
+  }
   try {
     const entries = await fs.readdir(SKILLS_DIR, { withFileTypes: true });
     const candidates = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
@@ -1074,13 +1164,15 @@ async function listSkillNames() {
         try {
           await fs.access(skillPath);
           return name;
-        } catch (error) {
+        } catch (_error) {
           return null;
         }
       })
     );
-    return checks.filter((name) => name);
-  } catch (error) {
+    const valid = checks.filter((name) => name);
+    SKILL_NAMES_CACHE = { data: valid, ts: now };
+    return valid;
+  } catch (_error) {
     return [];
   }
 }
@@ -1100,6 +1192,11 @@ async function readSkillContent(skillName) {
   if (!safeName) {
     return { error: "Invalid skill name" };
   }
+  const now = Date.now();
+  const cached = SKILL_CONTENT_CACHE.get(safeName);
+  if (cached && now - cached.ts < SKILL_CACHE_TTL_MS) {
+    return { name: safeName, content: cached.content };
+  }
   const skillPath = path.join(SKILLS_DIR, safeName, "SKILL.md");
   const resolved = path.resolve(skillPath);
   const rootResolved = path.resolve(SKILLS_DIR);
@@ -1108,6 +1205,7 @@ async function readSkillContent(skillName) {
   }
   try {
     const content = await fs.readFile(resolved, "utf-8");
+    SKILL_CONTENT_CACHE.set(safeName, { content, ts: now });
     return { name: safeName, content };
   } catch (error) {
     return { error: "Skill not found" };
@@ -1220,6 +1318,60 @@ const categoryTags = {
 
 function getTags(category) {
   return categoryTags[category] || [];
+}
+
+function isProduction() {
+  return MCP_ENV === "production";
+}
+
+function isHighRiskCategory(category) {
+  const risky = new Set(["exploitation", "sniffing"]);
+  return risky.has(category);
+}
+
+function profileOptions(tool, profile) {
+  const p = (profile || "").toLowerCase();
+  if (!p) return "";
+  switch (tool) {
+    case "sqlmap":
+      if (p === "quick") return "--risk=1 --level=1";
+      if (p === "complete") return "--risk=3 --level=5";
+      if (p === "stealth") return "--risk=1 --level=1 --delay=1";
+      return "";
+    case "nuclei":
+      if (p === "quick") return "-severity medium,high,critical -rl 100";
+      if (p === "complete") return "-severity low,medium,high,critical -rl 300";
+      if (p === "stealth") return "-rl 10";
+      return "";
+    case "hydra":
+      if (p === "quick") return "-t 4";
+      if (p === "complete") return "-t 16";
+      if (p === "stealth") return "-t 2";
+      return "";
+    case "gobuster":
+      if (p === "quick") return "-t 30";
+      if (p === "complete") return "-t 50";
+      if (p === "stealth") return "-t 10";
+      return "";
+    case "ffuf":
+      if (p === "quick") return "-t 30";
+      if (p === "complete") return "-t 50";
+      if (p === "stealth") return "-t 10 --rate 50";
+      return "";
+    case "dirb":
+      return "";
+    default:
+      return "";
+  }
+}
+
+async function fileExists(p) {
+  try {
+    await fs.access(p);
+    return true;
+  } catch (_e) {
+    return false;
+  }
 }
 
 function toolRunExample(tool, targetExample = "example.com") {
@@ -1369,6 +1521,14 @@ app.post("/api/llm/plan", async (req, res) => {
     } catch (_e) {
       return res.status(400).json({ error: "Invalid JSON from LLM", output: r.content });
     }
+    const schemaOk =
+      plan &&
+      typeof plan.tool === "string" &&
+      (typeof plan.target === "string" || plan.target === null || typeof plan.target === "undefined") &&
+      (typeof plan.options === "string" || typeof plan.options === "undefined");
+    if (!schemaOk) {
+      return res.status(400).json({ error: "Plan schema invalid", output: r.content, plan });
+    }
     if (!execute) {
       return res.json({ provider: r.provider, model: r.model, plan });
     }
@@ -1448,13 +1608,27 @@ app.post("/api/bruteforce/hydra", async (req, res) => {
     passlist = "/root/wordlists/rockyou.txt",
     port,
     options = "",
+    profile = "",
   } = req.body;
 
   if (!target || !service) {
     return res.status(400).json({ error: "Target and service are required" });
   }
 
+  const localUsers = "/root/wordlists/hydra/users.txt";
+  const localPasswords = "/root/wordlists/hydra/passwords.txt";
+  if (!userlist && await fileExists(localUsers)) {
+    userlist = localUsers;
+  }
+  if (!password && !passlist && await fileExists(localPasswords)) {
+    passlist = localPasswords;
+  }
+
+  const hydraProfile = profileOptions("hydra", profile);
   let command = "hydra ";
+  if (hydraProfile) {
+    command += `${hydraProfile} `;
+  }
 
   if (username) {
     command += `-l ${username} `;
@@ -1548,13 +1722,14 @@ app.post("/api/recon/subfinder", async (req, res) => {
 
 // ==================== SQLMAP ====================
 app.post("/api/web/sqlmap", async (req, res) => {
-  const { url, options = "--batch --risk=1 --level=1" } = req.body;
+  const { url, options = "--batch --risk=1 --level=1", profile = "" } = req.body;
 
   if (!url) {
     return res.status(400).json({ error: "URL is required" });
   }
 
-  const command = `sqlmap -u "${url}" ${options}`;
+  const sqlmapProfile = profileOptions("sqlmap", profile);
+  const command = `sqlmap -u "${url}" ${options} ${sqlmapProfile}`;
 
   const result = await executeCommand(command, 600000);
   const report = await saveReport("sqlmap", url, { command, ...result });
@@ -1638,14 +1813,20 @@ app.post("/api/web/nikto", async (req, res) => {
 
 // ==================== DIRB ====================
 app.post("/api/web/dirb", async (req, res) => {
-  const { url, wordlist = "/usr/share/wordlists/dirb/common.txt" } = req.body;
+  const { url, wordlist = "/usr/share/wordlists/dirb/common.txt", profile = "" } = req.body;
 
   if (!url) {
     return res.status(400).json({ error: "URL is required" });
   }
 
   const outputFile = `/root/reports/dirb_${url.replace(/[^a-zA-Z0-9]/g, "_")}_${Date.now()}.txt`;
-  const command = `dirb ${url} ${wordlist} -o ${outputFile}`;
+  let wl = wordlist;
+  const providedWL = typeof req.body.wordlist !== "undefined";
+  if (!providedWL && await fileExists("/root/wordlists/dirb/dirs.txt")) {
+    wl = "/root/wordlists/dirb/dirs.txt";
+  }
+  const dirbProfile = profileOptions("dirb", profile);
+  const command = `dirb ${url} ${wl} ${dirbProfile} -o ${outputFile}`;
 
   const result = await executeCommand(command, 600000);
   const report = await saveReport("dirb", url, { command, ...result });
@@ -1676,6 +1857,7 @@ app.post("/api/web/gobuster", async (req, res) => {
     wordlist = "/usr/share/wordlists/dirb/common.txt",
     mode = "dir",
     extensions = "",
+    profile = "",
   } = req.body;
 
   if (!url) {
@@ -1683,7 +1865,19 @@ app.post("/api/web/gobuster", async (req, res) => {
   }
 
   const outputFile = `/root/reports/gobuster_${url.replace(/[^a-zA-Z0-9]/g, "_")}_${Date.now()}.txt`;
-  let command = `gobuster ${mode} -u ${url} -w ${wordlist} -o ${outputFile}`;
+  let wl = wordlist;
+  const providedWL = typeof req.body.wordlist !== "undefined";
+  if (!providedWL) {
+    if (mode === "dns" && await fileExists("/root/wordlists/gobuster/subdomains.txt")) {
+      wl = "/root/wordlists/gobuster/subdomains.txt";
+    } else if (mode === "vhost" && await fileExists("/root/wordlists/gobuster/vhosts.txt")) {
+      wl = "/root/wordlists/gobuster/vhosts.txt";
+    } else if (mode === "dir" && await fileExists("/root/wordlists/gobuster/dirs.txt")) {
+      wl = "/root/wordlists/gobuster/dirs.txt";
+    }
+  }
+  const gobusterProfile = profileOptions("gobuster", profile);
+  let command = `gobuster ${mode} -u ${url} -w ${wl} ${gobusterProfile} -o ${outputFile}`;
 
   if (extensions) {
     command += ` -x ${extensions}`;
@@ -1739,13 +1933,14 @@ app.post("/api/web/httpx", async (req, res) => {
 });
 
 app.post("/api/web/nuclei", async (req, res) => {
-  const { target, options = "" } = req.body;
+  const { target, options = "", profile = "" } = req.body;
 
   if (!target) {
     return res.status(400).json({ error: "Target is required" });
   }
 
-  const command = `nuclei -u ${target} ${options}`;
+  const nucleiProfile = profileOptions("nuclei", profile);
+  const command = `nuclei -u ${target} ${options} ${nucleiProfile}`;
 
   const result = await executeCommand(command, 600000);
   const report = await saveReport("nuclei", target, { command, ...result });
@@ -1766,14 +1961,20 @@ app.post("/api/web/nuclei", async (req, res) => {
 });
 
 app.post("/api/web/ffuf", async (req, res) => {
-  const { url, wordlist = "/usr/share/wordlists/dirb/common.txt", options = "" } = req.body;
+  const { url, wordlist = "/usr/share/wordlists/dirb/common.txt", options = "", profile = "" } = req.body;
 
   if (!url) {
     return res.status(400).json({ error: "URL is required" });
   }
 
   const outputFile = `/root/reports/ffuf_${url.replace(/[^a-zA-Z0-9]/g, "_")}_${Date.now()}.json`;
-  const command = `ffuf -u ${url} -w ${wordlist} ${options} -of json -o ${outputFile}`;
+  let wl = wordlist;
+  const providedWL = typeof req.body.wordlist !== "undefined";
+  if (!providedWL && await fileExists("/root/wordlists/ffuf/dirs.txt")) {
+    wl = "/root/wordlists/ffuf/dirs.txt";
+  }
+  const ffufProfile = profileOptions("ffuf", profile);
+  const command = `ffuf -u ${url} -w ${wl} ${options} ${ffufProfile} -of json -o ${outputFile}`;
 
   const result = await executeCommand(command, 600000);
   const report = await saveReport("ffuf", url, { command, ...result });
@@ -1862,7 +2063,9 @@ app.post("/api/web/dirsearch", async (req, res) => {
 });
 
 app.post("/api/tools/run", async (req, res) => {
-  const { tool, target, options = "", stream = false } = req.body;
+  const startedAt = Date.now();
+  const { tool, target, options = "", stream = true } = req.body;
+  const jobId = genJobId();
 
   if (!tool) {
     return res.status(400).json({ error: "Tool is required" });
@@ -1881,6 +2084,20 @@ app.post("/api/tools/run", async (req, res) => {
   if (!command) {
     return res.status(400).json({ error: "Tool not supported" });
   }
+  if (isProduction() && isHighRiskCategory(config.category)) {
+    const risk = assessRisk(command);
+    const payload = buildResponse({
+      success: false,
+      tool,
+      target: target || null,
+      command,
+      result: { stdout: "", stderr: "", error: "High-risk tool requires dry-run in production" },
+      report: null,
+      artifacts: [],
+      meta: { options, jobId, env: "production", policy: "dry_run_required", risk },
+    });
+    return res.status(400).json(payload);
+  }
 
   if (stream) {
     res.writeHead(200, {
@@ -1888,7 +2105,7 @@ app.post("/api/tools/run", async (req, res) => {
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     });
-    res.write(`event: start\ndata: ${JSON.stringify({ tool, target, command })}\n\n`);
+    res.write(`event: start\ndata: ${JSON.stringify({ jobId, tool, target, command })}\n\n`);
   }
 
   const result = await executeCommand(command, 900000);
@@ -1901,17 +2118,20 @@ app.post("/api/tools/run", async (req, res) => {
     result,
     report: report.filename,
     artifacts: [report.artifact],
-    meta: { options },
+    meta: { options, jobId },
   });
 
   if (stream) {
     res.write(`event: complete\ndata: ${JSON.stringify(payload)}\n\n`);
+    recordLatency("tools.run", Date.now() - startedAt);
     return res.end();
   }
 
   if (!result.success) {
+    recordLatency("tools.run", Date.now() - startedAt);
     return res.status(500).json(payload);
   }
+  recordLatency("tools.run", Date.now() - startedAt);
   return res.json(payload);
 });
 
@@ -1951,71 +2171,91 @@ app.post("/api/tools/dry-run", async (req, res) => {
 });
 
 app.post("/api/tools/pipeline", async (req, res) => {
-  const { steps = [] } = req.body;
+  const startedAt = Date.now();
+  const { steps = [], concurrency = 3 } = req.body;
+  const jobId = genJobId();
 
   if (!Array.isArray(steps) || steps.length === 0) {
     return res.status(400).json({ error: "Steps array is required" });
   }
 
-  const results = [];
-  for (const step of steps) {
+  const results = new Array(steps.length);
+  let nextIndex = 0;
+
+  async function runStep(i) {
+    const step = steps[i];
     const { tool, target, options = "", dryRun = false } = step;
     if (!tool) {
-      results.push({ success: false, error: "Tool is required" });
-      continue;
+      results[i] = { success: false, error: "Tool is required" };
+      return;
     }
     const config = toolRunner[tool];
     if (!config) {
-      results.push({ success: false, tool, error: "Tool not supported" });
-      continue;
+      results[i] = { success: false, tool, error: "Tool not supported" };
+      return;
     }
     if (config.requiresTarget && !target) {
-      results.push({ success: false, tool, error: "Target is required" });
-      continue;
+      results[i] = { success: false, tool, error: "Target is required" };
+      return;
     }
-
     const command = buildToolCommand(tool, target, options);
-    if (dryRun) {
+    const mustDryRun = isProduction() && isHighRiskCategory(config.category);
+    if (dryRun || mustDryRun) {
       const risk = assessRisk(command);
-      results.push(
-        buildResponse({
-          success: risk.allowed,
-          tool,
-          target: target || null,
-          command,
-          result: { stdout: "", stderr: "", error: risk.allowed ? null : "Command rejected by risk policy" },
-          report: null,
-          artifacts: [],
-          meta: { options, dryRun: true, risk },
-        })
-      );
-      continue;
-    }
-
-    const executed = await runConfiguredTool({ tool, target, options });
-    if (executed.error) {
-      results.push({ success: false, tool, error: executed.error });
-      continue;
-    }
-    results.push(
-      buildResponse({
-        success: executed.result.success,
+      results[i] = buildResponse({
+        success: risk.allowed,
         tool,
         target: target || null,
-        command: executed.command,
-        result: executed.result,
-        report: executed.report.filename,
-        artifacts: [executed.report.artifact],
-        meta: { options },
-      })
-    );
+        command,
+        result: { stdout: "", stderr: "", error: risk.allowed ? null : "Command rejected by risk policy" },
+        report: null,
+        artifacts: [],
+        meta: { options, dryRun: true, risk, jobId, env: mustDryRun ? "production" : undefined, policy: mustDryRun ? "dry_run_enforced" : undefined },
+      });
+      return;
+    }
+    const executed = await runConfiguredTool({ tool, target, options });
+    if (executed.error) {
+      results[i] = { success: false, tool, error: executed.error };
+      return;
+    }
+    results[i] = buildResponse({
+      success: executed.result.success,
+      tool,
+      target: target || null,
+      command: executed.command,
+      result: executed.result,
+      report: executed.report.filename,
+      artifacts: [executed.report.artifact],
+      meta: { options, jobId },
+    });
   }
 
+  async function worker() {
+    while (true) {
+      const i = nextIndex;
+      if (i >= steps.length) {
+        return;
+      }
+      nextIndex++;
+      await runStep(i);
+    }
+  }
+
+  const cc = Math.max(1, Math.min(Number(concurrency) || 3, steps.length));
+  const workers = [];
+  for (let k = 0; k < cc; k++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+
   const payload = {
-    success: results.every((item) => item.success),
+    success: results.every((item) => item && item.success),
     results,
+    jobId,
     timestamp: new Date().toISOString(),
   };
+  recordLatency("tools.pipeline", Date.now() - startedAt);
   return res.json(payload);
 });
 
@@ -2181,6 +2421,7 @@ app.get("/api/tools/list", async (req, res) => {
     examples: [toolRunExample(name)],
     skillAvailable: skillNames.has(name),
     skillEndpoint: `/api/skills/${name}`,
+    skillStatus: skillNames.has(name) ? "ok" : "missing",
   }));
 
   const baseTools = tools.map((tool) => ({
@@ -2189,6 +2430,7 @@ app.get("/api/tools/list", async (req, res) => {
     examples: [toolRunExample(tool.name)],
     skillAvailable: skillNames.has(tool.name),
     skillEndpoint: `/api/skills/${tool.name}`,
+    skillStatus: skillNames.has(tool.name) ? "ok" : "missing",
   }));
 
   res.json({ tools: baseTools.concat(extendedTools) });
@@ -2220,12 +2462,45 @@ app.get("/api/reports/summary/:filename", async (req, res) => {
   try {
     const filepath = path.join(REPORTS_DIR, req.params.filename);
     const content = await fs.readFile(filepath, "utf8");
-    const summary = content.slice(0, 4000);
-    res.json({
-      filename: req.params.filename,
-      summary,
-      truncated: content.length > summary.length,
-    });
+    let summary = "";
+    let truncated = false;
+    try {
+      const json = JSON.parse(content);
+      const tool = String(json.tool || "");
+      const target = String(json.target || "");
+      const success = Boolean(json.success);
+      const error = json.error ? String(json.error) : "";
+      const stdout = String(json.stdout || "");
+      const stderr = String(json.stderr || "");
+      const lines = [];
+      lines.push(`tool=${tool}`);
+      lines.push(`target=${target}`);
+      lines.push(`success=${success}`);
+      if (error) lines.push(`error=${error}`);
+      const counts = {};
+      counts.ok200 = (stdout.match(/\b200\b/g) || []).length;
+      counts.openPorts = (stdout.match(/\bopen\b/gi) || []).length;
+      counts.critical = (stdout.match(/\bcritical\b/gi) || []).length;
+      counts.high = (stdout.match(/\bhigh\b/gi) || []).length;
+      counts.finds = (stdout.match(/\bFound\b/gi) || []).length;
+      counts.credentials = (stdout.match(/login:\s*\S+\s+password:\s*\S+/gi) || []).length + (stdout.match(/valid password found/gi) || []).length;
+      const metrics = Object.entries(counts).filter(([, v]) => v > 0).map(([k, v]) => `${k}=${v}`);
+      if (metrics.length) {
+        lines.push(...metrics);
+      }
+      if (stderr) {
+        lines.push(`stderr_len=${stderr.length}`);
+      }
+      summary = lines.join("\n");
+      if (summary.length > 4000) {
+        summary = summary.slice(0, 4000);
+        truncated = true;
+      }
+    } catch (_e) {
+      summary = content.slice(0, 4000);
+      truncated = content.length > summary.length;
+    }
+    res.json({ filename: req.params.filename, summary, truncated });
   } catch (error) {
     console.error(error);
     res.status(404).json({ error: "Report not found" });
