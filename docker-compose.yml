@@ -21,13 +21,13 @@ services:
       - "127.0.0.1:8080:8080"
 
     volumes:
-      - ./MCP-kali/reports:/root/reports
-      - ./MCP-kali/scripts:/root/scripts
-      - ./MCP-kali/targets:/root/targets
-      - ./MCP-kali/wordlists:/root/wordlists
-      - ./MCP-kali/nmap-results:/root/nmap-results
-      - ./MCP-kali/config:/root/.config
-      - ./MCP-kali/skills:/root/skills
+      - ./reports:/root/reports
+      - ./scripts:/root/scripts
+      - ./targets:/root/targets
+      - ./wordlists:/root/wordlists
+      - ./nmap-results:/root/nmap-results
+      - ./config:/root/.config
+      - ./skills:/root/skills
       - metasploit-db:/var/lib/postgresql
 
     environment:
@@ -36,7 +36,7 @@ services:
       - MCP_PORT=${MCP_PORT:-3000}
       - MCP_HOST=0.0.0.0
       - MCP_ADVERTISED_URL=http://cleo-kali-mcp:3000
-      - OPENCLAW_GATEWAY_URL=
+      - OPENCLAW_GATEWAY_URL=http://zeroclaw:42617
       - OPENCLAW_REQUIRE_GATEWAY=false
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - OPENCLAW_DEVICE_IDENTITY_PATH=/root/.config/openclaw-device-identity.json
