@@ -16,9 +16,9 @@ services:
       - SYS_ADMIN
 
     ports:
-      - "${MCP_PORT:-3000}:3000"   # MCP Server
-      - "4444:4444"                # Metasploit listener
-      - "8080:8080"                # Web proxy/tools
+      - "127.0.0.1:${MCP_PORT:-3000}:3000"
+      - "127.0.0.1:4444:4444"
+      - "127.0.0.1:8080:8080"
 
     volumes:
       - ./MCP-kali/reports:/root/reports
