@@ -36,7 +36,7 @@ services:
       - MCP_PORT=${MCP_PORT:-3000}
       - MCP_HOST=0.0.0.0
       - MCP_ADVERTISED_URL=http://cleo-kali-mcp:3000
-      - OPENCLAW_GATEWAY_URL=http://zeroclaw:42617
+      - OPENCLAW_GATEWAY_URL=
       - OPENCLAW_REQUIRE_GATEWAY=false
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - OPENCLAW_DEVICE_IDENTITY_PATH=/root/.config/openclaw-device-identity.json

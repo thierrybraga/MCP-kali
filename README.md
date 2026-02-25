@@ -66,18 +66,20 @@ mkdir kali-mcp && cd kali-mcp
 ```
 
 ### 2. Estrutura de diretórios
-
 ```
 kali-mcp/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── README.md
-├── mcp-server/
-│   ├── server.js
-│   └── package.json
-└── scripts/
-    ├── full_recon.sh
-    └── auto_bruteforce.sh
+├── server.js
+├── package.json
+├── scripts/
+├── skills/
+├── docs/
+├── wordlists/
+├── swagger.json
+├── mcp_client.py
+└── pentest_automation.py
 ```
 
 ### 3. Build da imagem
@@ -89,6 +91,9 @@ docker-compose build
 ### 4. Iniciar o container
 
 ```bash
+# criar a rede necessária (apenas uma vez)
+docker network create openclaw-net
+
 docker-compose up -d
 ```
 
@@ -97,6 +102,30 @@ docker-compose up -d
 ```bash
 docker exec -it cleo-kali-mcp /bin/bash
 ```
+
+## 🤖 Configuração de LLM
+
+O MCP Server suporta múltiplos provedores LLM. Por padrão, você pode definir o provedor e o modelo via variáveis de ambiente.
+
+### Padrão: OpenAI com fallback Ollama
+
+Crie/edite o arquivo `.env` na raiz do projeto com:
+
+```bash
+LLM_PROVIDER=openai
+OPENAI_API_KEY=SEU_TOKEN_OPENAI
+OPENAI_MODEL=gpt-5-mini
+
+LLM_FALLBACK_PROVIDER=ollama
+LLM_FALLBACK_MODEL=qwen3:8b
+
+# Ajuste se seu Ollama roda localmente fora do Docker
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+- O servidor tenta o provedor definido em `LLM_PROVIDER` primeiro e, em caso de falha, utiliza o fallback configurado.
+- A URL padrão do Ollama no container é `http://host.docker.internal:11434`. Se você não usa Docker Desktop no host, ajuste `OLLAMA_BASE_URL` conforme necessário.
+- Modelos e provedores utilizados pelo servidor: veja [server.js](file:///d:/MCP-kali/server.js#L45-L59) e a lógica de chat em [server.js](file:///d:/MCP-kali/server.js#L85-L224).
 
 ## 🔧 Uso
 
