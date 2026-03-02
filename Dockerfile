@@ -256,6 +256,14 @@ RUN cp -r /usr/share/wordlists/* /root/wordlists/ 2>/dev/null || true && \
     gunzip /root/wordlists/*.gz 2>/dev/null || true && \
     chmod -R a+rX /usr/share/wordlists /root/wordlists
 
+# Instalar 2captcha-cli para resolução de CAPTCHAs
+RUN curl -fsSL https://raw.githubusercontent.com/adinvadim/2captcha-cli/main/solve-captcha \
+    -o /usr/local/bin/solve-captcha && \
+    chmod +x /usr/local/bin/solve-captcha
+
+# Copiar Caipora RAG Tools (base de conhecimento)
+COPY caipora-tools.json /root/wordlists/caipora-tools.json
+
 # Removido pip install devido ao PEP 668; dependências Python via apt
 
 # Copiar MCP server e scripts
@@ -279,7 +287,7 @@ RUN msfdb init 2>/dev/null || true
 RUN printf '#!/bin/bash\n\
 echo "================================================="\n\
 echo "  Kali Linux MCP Pentest Environment"\n\
-echo "  Version: 1.0"\n\
+echo "  Version: 1.1"\n\
 echo "================================================="\n\
 echo ""\n\
 echo "Available Tools:"\n\
@@ -288,13 +296,45 @@ echo "  - hydra, medusa (Brute force)"\n\
 echo "  - sqlmap, wpscan (Web testing)"\n\
 echo "  - metasploit (Exploitation)"\n\
 echo "  - aircrack-ng (Wireless)"\n\
+echo "  - caipora-rag (AI Assistant)"\n\
+echo "  - 2captcha (Automation)"\n\
+echo "  - tor/onion (Deep Web)"\n\
 echo ""\n\
 echo "MCP Server: http://localhost:${MCP_PORT:-3000}"\n\
 echo "Reports: /root/reports"\n\
 echo "Scripts: /root/scripts"\n\
 echo "================================================="\n\
 echo ""\n\
-cd /opt/mcp-server && node server.js &\n\
+# Iniciar Tor\n\
+service tor start > /dev/null 2>&1\n\
+echo "[*] Tor service started"\n\
+\n\
+# Iniciar MCP Server\n\
+cd /opt/mcp-server && node server.js > /opt/mcp-server/mcp.log 2>&1 &\n\
+MCP_PID=$!\n\
+echo "[*] MCP Server started (PID: $MCP_PID)"\n\
+\n\
+# Health Check loop\n\
+echo "[*] Waiting for services..."\n\
+for i in {1..30}; do\n\
+  if curl -s http://localhost:${MCP_PORT:-3000}/health >/dev/null; then\n\
+    echo "[+] MCP Server is healthy!"\n\
+    break\n\
+  fi\n\
+  sleep 1\n\
+done\n\
+\n\
+if [ "$OPENCLAW_REQUIRE_GATEWAY" = "true" ]; then\n\
+  echo "[ZeroClaw] Verifying Gateway connection..."\n\
+  for i in {1..30}; do\n\
+    if grep -q "openclaw_register_ok" /opt/mcp-server/mcp.log 2>/dev/null; then\n\
+      echo "[ZeroClaw] Registration successful!"\n\
+      break\n\
+    fi\n\
+    sleep 1\n\
+  done\n\
+fi\n\
+\n\
 exec /bin/bash\n\
 ' > /root/start.sh && chmod +x /root/start.sh
 

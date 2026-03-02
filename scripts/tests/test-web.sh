@@ -117,18 +117,37 @@ echo "$R" | grep -q '"tool":"nuclei"' \
   && pass "nuclei execution returns tool field" \
   || fail "nuclei execution" "unexpected response"
 
-# --- SQLMAP (dry-run via tools) ---
+# --- SQLMAP ---
 echo "-- sqlmap --"
+# 1. Validation
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/api/web/sqlmap" \
   -H "Content-Type: application/json" -d '{}')
 [ "$CODE" = "400" ] && pass "sqlmap: Missing url returns 400" || fail "sqlmap: Missing url" "got $CODE"
 
-R=$(curl -sf -X POST "$BASE_URL/api/tools/dry-run" \
+# 2. Execution (Tool field check)
+R=$(curl -sf -X POST "$BASE_URL/api/web/sqlmap" \
   -H "Content-Type: application/json" \
-  -d '{"tool":"commix","target":"http://example.com/page?id=1","options":"--batch"}')
-echo "$R" | grep -q '"command"' \
-  && pass "sqlmap/commix dry-run has command" \
-  || fail "sqlmap dry-run" "no command"
+  -d "{\"url\":\"http://localhost:3000/page.php?id=1\",\"options\":\"--dbs --batch --level 1\"}")
+echo "$R" | grep -q '"tool":"sqlmap"' \
+  && pass "sqlmap execution returns tool field" \
+  || fail "sqlmap execution" "unexpected response"
+
+# 3. Dry-run checks
+echo "-- sqlmap dry-run --"
+dry_sqlmap() {
+  local desc="$1"; local target="$2"; local options="$3"
+  local R
+  R=$(curl -sf -X POST "$BASE_URL/api/tools/dry-run" \
+    -H "Content-Type: application/json" \
+    -d "{\"tool\":\"sqlmap\",\"target\":\"$target\",\"options\":\"$options\"}")
+  echo "$R" | grep -q '"command"' \
+    && pass "sqlmap dry-run: $desc" \
+    || fail "sqlmap dry-run: $desc" "no command"
+}
+
+dry_sqlmap "enum DBs"          "http://example.com/page.php?id=1" "-u http://example.com/page.php?id=1 --dbs --batch"
+dry_sqlmap "dump table"        "http://example.com/page.php?id=1" "-u http://example.com/page.php?id=1 -D testdb -T users --dump --batch"
+dry_sqlmap "WAF evasion"       "http://example.com/page.php?id=1" "-u http://example.com/page.php?id=1 --tamper=space2comment --random-agent --dbs --batch"
 
 # --- WPSCAN (dry-run) ---
 echo "-- wpscan --"

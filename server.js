@@ -57,6 +57,9 @@ const KIMI_MODEL = process.env.KIMI_MODEL || "moonshot-v1-8k";
 const KIMI_BASE_URL = process.env.KIMI_BASE_URL || "https://api.moonshot.cn";
 const LLM_FALLBACK_PROVIDER = (process.env.LLM_FALLBACK_PROVIDER || "").toLowerCase();
 const LLM_FALLBACK_MODEL = process.env.LLM_FALLBACK_MODEL || "";
+const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || "";
+const PERPLEXITY_MODEL = process.env.PERPLEXITY_MODEL || "sonar-reasoning-pro";
+const CAIPORA_TOOLS_PATH = process.env.CAIPORA_TOOLS_PATH || "/root/wordlists/caipora-tools.json";
 
 // Middleware
 app.use(express.json());
@@ -1298,6 +1301,7 @@ const toolRunner = {
   "airmon-ng": { template: "airmon-ng {options}", category: "wireless", description: "Monitor mode manager", requiresTarget: false },
   "airodump-ng": { template: "airodump-ng {options}", category: "wireless", description: "Wireless packet capture", requiresTarget: false },
   "aireplay-ng": { template: "aireplay-ng {options}", category: "wireless", description: "Packet injection tool", requiresTarget: false },
+  "2captcha": { template: "solve-captcha {options}", category: "automation", description: "Solve CAPTCHAs", requiresTarget: false },
 };
 
 const categoryTags = {
@@ -1312,6 +1316,7 @@ const categoryTags = {
   wireless: ["wireless"],
   sniffing: ["network"],
   post: ["post"],
+  automation: ["automation"],
   forensics: ["forensics"],
   bugbounty: ["bugbounty"],
 };
@@ -1446,7 +1451,174 @@ app.get("/", (req, res) => {
       swaggerJson: "/swagger.json",
       llmChat: "/api/llm/chat",
       llmPlan: "/api/llm/plan",
+      caiporaChat: "/api/caipora/chat",
+      deepResearch: "/api/research/deep",
     },
+  });
+});
+
+// ==================== ONION SEARCH & TOR ====================
+
+app.post("/api/onion/search", async (req, res) => {
+  const { query, engine = "ahmia" } = req.body;
+  
+  if (!query) {
+    return res.status(400).json({ error: "Query is required" });
+  }
+
+  const isTorRunning = await ensureTorRunning();
+  if (!isTorRunning) {
+    return res.status(500).json({ error: "Tor service is not running and could not be started" });
+  }
+
+  let searchUrl;
+  switch (engine.toLowerCase()) {
+    case "ahmia":
+      searchUrl = `http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=${encodeURIComponent(query)}`;
+      break;
+    case "torch":
+      searchUrl = `http://xmh57jrknzkhv6y3ls3ubitzfqnkrwxhopf5ckg74owjquxqgyvk5gid.onion/search/?q=${encodeURIComponent(query)}`;
+      break;
+    case "haystak":
+      searchUrl = `http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/?q=${encodeURIComponent(query)}`;
+      break;
+    default:
+      return res.status(400).json({ error: "Unsupported engine. Use: ahmia, torch, haystak" });
+  }
+
+  const result = await fetchViaTor(searchUrl);
+  if (!result.success) {
+    return res.status(500).json({ 
+      error: "Tor fetch failed", 
+      details: result.stderr 
+    });
+  }
+
+  // Parse results based on engine (basic implementation)
+  const links = extractLinks(result.stdout).filter(l => l.includes(".onion"));
+  
+  return res.json({
+    success: true,
+    engine,
+    query,
+    links: links.slice(0, 50), // Limit results
+    raw_html_length: result.stdout.length
+  });
+});
+
+// ==================== PERPLEXITY DEEP RESEARCH ====================
+
+async function perplexitySearch(query) {
+  if (!PERPLEXITY_API_KEY) {
+    return { ok: false, error: "PERPLEXITY_API_KEY missing" };
+  }
+
+  try {
+    const resp = await fetch("https://api.perplexity.ai/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: PERPLEXITY_MODEL,
+        messages: [
+          { role: "system", content: "You are a deep research assistant specializing in cybersecurity and OSINT. Provide detailed, sourced answers." },
+          { role: "user", content: query }
+        ]
+      })
+    });
+
+    if (!resp.ok) {
+      return { ok: false, error: `Perplexity API error: ${resp.status}` };
+    }
+
+    const data = await resp.json();
+    return { 
+      ok: true, 
+      content: data.choices[0].message.content,
+      citations: data.citations || [] 
+    };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+app.post("/api/research/deep", async (req, res) => {
+  const { query } = req.body;
+  if (!query) return res.status(400).json({ error: "Query required" });
+
+  const result = await perplexitySearch(query);
+  if (!result.ok) return res.status(500).json(result);
+
+  return res.json(result);
+});
+
+// ==================== CAIPORA RAG ASSISTANT ====================
+
+let caiporaToolsCache = null;
+
+async function loadCaiporaTools() {
+  if (caiporaToolsCache) return caiporaToolsCache;
+  try {
+    const content = await fs.readFile(CAIPORA_TOOLS_PATH, "utf8");
+    caiporaToolsCache = JSON.parse(content);
+    return caiporaToolsCache;
+  } catch (error) {
+    console.error("Failed to load Caipora tools:", error);
+    return { categories: {} };
+  }
+}
+
+app.post("/api/caipora/chat", async (req, res) => {
+  const { prompt, model } = req.body;
+  if (!prompt) return res.status(400).json({ error: "Prompt required" });
+
+  const toolsDb = await loadCaiporaTools();
+  
+  // Basic RAG: Find relevant tools based on keywords
+  // This is a simple keyword match. For production, use vector embeddings.
+  const keywords = prompt.toLowerCase().split(" ").filter(w => w.length > 3);
+  const relevantTools = [];
+  
+  if (toolsDb.categories) {
+    for (const [cat, tools] of Object.entries(toolsDb.categories)) {
+      for (const tool of tools) {
+        const text = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase();
+        const score = keywords.filter(k => text.includes(k)).length;
+        if (score > 0) {
+          relevantTools.push({ ...tool, score });
+        }
+      }
+    }
+  }
+
+  // Sort by relevance and take top 5
+  relevantTools.sort((a, b) => b.score - a.score);
+  const context = relevantTools.slice(0, 5).map(t => 
+    `- Tool: ${t.name}\n  Desc: ${t.description}\n  URL: ${t.url}\n  Cat: ${t.category}`
+  ).join("\n\n");
+
+  const systemPrompt = `You are Caipora, a cybersecurity assistant powered by a vast knowledge base of tools.
+Use the following context about security tools to answer the user's question.
+If the tools in context are relevant, recommend them. If not, use your general knowledge but mention you checked the Caipora base.
+
+Context from Caipora Knowledge Base:
+${context || "No specific tools found in knowledge base for this query."}`;
+
+  // Use existing LLM chat function
+  const result = await llmChat(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: prompt }
+    ], 
+    "openai", // Default provider, can be customized
+    model
+  );
+
+  return res.json({
+    response: result.content,
+    context_tools: relevantTools.slice(0, 5)
   });
 });
 
@@ -2411,6 +2583,7 @@ app.get("/api/tools/list", async (req, res) => {
     { name: "zaproxy", category: "web", description: "Web proxy and scanner" },
     { name: "burpsuite", category: "web", description: "Web proxy and testing suite" },
     { name: "metasploit", category: "exploitation", description: "Exploitation framework" },
+    { name: "2captcha", category: "automation", description: "Solve CAPTCHAs" },
   ];
 
   const extendedTools = Object.entries(toolRunner).map(([name, config]) => ({
