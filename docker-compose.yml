@@ -54,6 +54,8 @@ services:
       - KIMI_BASE_URL=${KIMI_BASE_URL:-https://api.moonshot.cn}
       - LLM_FALLBACK_PROVIDER=${LLM_FALLBACK_PROVIDER:-ollama}
       - LLM_FALLBACK_MODEL=${LLM_FALLBACK_MODEL:-}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
+      - TWOCAPTCHA_API_KEY=${TWOCAPTCHA_API_KEY:-}
 
     restart: unless-stopped
     stdin_open: true
