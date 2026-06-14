@@ -132,6 +132,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 ### MCP Server API
 
 O servidor MCP estará disponível em `http://localhost:3000`
+- [Helium MCP](https://github.com/connerlambden/helium-mcp) — Real-time news with 37-dimension bias scoring, ML options pricing, and live market data. [Interactive demo](https://connerlambden.github.io/helium-news-explorer/) · [REST API](https://heliumtrades.com/mcp-page/)
 
 #### Endpoints Disponíveis
 
