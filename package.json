@@ -19,6 +19,7 @@
     "test": "bash scripts/run-all-tests.sh",
     "test:fast": "SKIP_SLOW=1 bash scripts/run-all-tests.sh",
     "test:health": "bash scripts/tests/test-health.sh",
+    "test:mcp": "bash scripts/tests/test-mcp.sh",
     "test:skills": "bash scripts/tests/test-skills.sh",
     "test:security": "bash scripts/tests/test-security.sh",
     "test:pipeline": "bash scripts/tests/test-pipeline.sh",

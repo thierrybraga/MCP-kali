@@ -148,69 +148,73 @@ run_suite "Health Check"            "$TESTS_DIR/test-health.sh"
 echo -e "${CYAN}${BOLD}═══ GRUPO 2: Skills API ═══${NC}"
 run_suite "Skills Endpoints"        "$TESTS_DIR/test-skills.sh"
 
-# --- Grupo 3: Reports & Artifacts ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 3: Reports & Tools List ═══${NC}"
+# --- Grupo 3: MCP Protocol ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 3: MCP Protocol ═══${NC}"
+run_suite "MCP JSON-RPC"            "$TESTS_DIR/test-mcp.sh"
+
+# --- Grupo 4: Reports & Artifacts ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 4: Reports & Tools List ═══${NC}"
 run_suite "Reports & Artifacts"     "$TESTS_DIR/test-reports.sh"
 
-# --- Grupo 4: Segurança ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 4: Controles de Segurança ═══${NC}"
+# --- Grupo 5: Segurança ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 5: Controles de Segurança ═══${NC}"
 run_suite "Security Controls"       "$TESTS_DIR/test-security.sh"
 
-# --- Grupo 5: Ferramentas Genéricas (dry-run) ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 5: Ferramentas Genéricas (dry-run) ═══${NC}"
+# --- Grupo 6: Ferramentas Genéricas (dry-run) ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 6: Ferramentas Genéricas (dry-run) ═══${NC}"
 run_suite "Generic Tools Dry-Run"   "$TESTS_DIR/test-tools-generic.sh"
 
-# --- Grupo 6: Pipeline ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 6: Pipeline Multi-Ferramenta ═══${NC}"
+# --- Grupo 7: Pipeline ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 7: Pipeline Multi-Ferramenta ═══${NC}"
 run_suite "Pipeline Tests"          "$TESTS_DIR/test-pipeline.sh"
 
-# --- Grupo 7: Scanning (requer execução real) ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 7: Scanning Tools ═══${NC}"
+# --- Grupo 8: Scanning (requer execução real) ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 8: Scanning Tools ═══${NC}"
 run_suite "nmap Scanner"            "$TESTS_DIR/test-nmap.sh"      "$SKIP_SLOW"
 run_suite "masscan Scanner"         "$TESTS_DIR/test-masscan.sh"   "$SKIP_SLOW"
 
-# --- Grupo 8: Reconhecimento ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 8: Reconhecimento ═══${NC}"
+# --- Grupo 9: Reconhecimento ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 9: Reconhecimento ═══${NC}"
 run_suite "Recon (amass/subfinder)" "$TESTS_DIR/test-recon.sh"     "$SKIP_SLOW"
 
-# --- Grupo 9: Web Tools ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 9: Web Application Tools ═══${NC}"
+# --- Grupo 10: Web Tools ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 10: Web Application Tools ═══${NC}"
 run_suite "Web Tools"               "$TESTS_DIR/test-web.sh"       "$SKIP_SLOW"
 
-# --- Grupo 10: Brute Force ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 10: Brute Force ═══${NC}"
+# --- Grupo 11: Brute Force ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 11: Brute Force ═══${NC}"
 run_suite "Hydra Bruteforce"        "$TESTS_DIR/test-hydra.sh"     "$SKIP_SLOW"
 
-# --- Grupo 11: Exploit ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 11: Exploitation ═══${NC}"
+# --- Grupo 12: Exploit ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 12: Exploitation ═══${NC}"
 run_suite "Metasploit"              "$TESTS_DIR/test-metasploit.sh" "$SKIP_SLOW"
 
-# --- Grupo 12: Password Cracking ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 12: Password Cracking ═══${NC}"
+# --- Grupo 13: Password Cracking ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 13: Password Cracking ═══${NC}"
 run_suite "Password Cracking"       "$TESTS_DIR/test-password-cracking.sh"
 
-# --- Grupo 13: Wireless ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 13: Wireless Tools ═══${NC}"
+# --- Grupo 14: Wireless ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 14: Wireless Tools ═══${NC}"
 run_suite "Wireless Tools"          "$TESTS_DIR/test-wireless.sh"
 
-# --- Grupo 14: Exploitation Frameworks ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 14: Exploitation Frameworks ═══${NC}"
+# --- Grupo 15: Exploitation Frameworks ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 15: Exploitation Frameworks ═══${NC}"
 run_suite "Exploitation Frameworks" "$TESTS_DIR/test-exploitation.sh"
 
-# --- Grupo 15: Sniffing & MITM ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 15: Sniffing & MITM ═══${NC}"
+# --- Grupo 16: Sniffing & MITM ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 16: Sniffing & MITM ═══${NC}"
 run_suite "Sniffing & MITM"         "$TESTS_DIR/test-sniffing.sh"
 
-# --- Grupo 16: Post-Exploitation ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 16: Post-Exploitation ═══${NC}"
+# --- Grupo 17: Post-Exploitation ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 17: Post-Exploitation ═══${NC}"
 run_suite "Post-Exploitation"       "$TESTS_DIR/test-post-exploitation.sh"
 
-# --- Grupo 17: Forensics & Reverse Engineering ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 17: Forensics & Reverse Engineering ═══${NC}"
+# --- Grupo 18: Forensics & Reverse Engineering ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 18: Forensics & Reverse Engineering ═══${NC}"
 run_suite "Forensics & RE"          "$TESTS_DIR/test-forensics.sh"
 
-# --- Grupo 18: Active Directory & Network ---
-echo -e "${CYAN}${BOLD}═══ GRUPO 18: Active Directory & Network ═══${NC}"
+# --- Grupo 19: Active Directory & Network ---
+echo -e "${CYAN}${BOLD}═══ GRUPO 19: Active Directory & Network ═══${NC}"
 run_suite "AD & Network"            "$TESTS_DIR/test-ad-network.sh"
 
 # ============================================================

@@ -112,8 +112,10 @@ recon: ## Script de reconhecimento completo (usa TARGET=)
 		echo "$(RED)Error: TARGET not specified$(NC)"; \
 		echo "Usage: make recon TARGET=192.168.1.0/24"; \
 	else \
-		echo "$(BLUE)Running full reconnaissance on $(TARGET)...$(NC)"; \
-		docker exec cleo-kali-mcp /root/scripts/full_recon.sh $(TARGET); \
+		echo "$(BLUE)Running reconnaissance pipeline on $(TARGET)...$(NC)"; \
+		curl -s -X POST http://localhost:$${MCP_PORT:-3000}/api/tools/pipeline \
+			-H "Content-Type: application/json" \
+			-d '{"steps":[{"tool":"nmap","target":"$(TARGET)","options":"-sn"},{"tool":"nmap","target":"$(TARGET)","options":"-sV -sC --top-ports 1000"}]}' | jq .; \
 	fi
 
 bruteforce: ## Brute force (usa TARGET=, SERVICE=, USER=)
@@ -121,6 +123,7 @@ bruteforce: ## Brute force (usa TARGET=, SERVICE=, USER=)
 		echo "$(RED)Error: TARGET and SERVICE required$(NC)"; \
 		echo "Usage: make bruteforce TARGET=192.168.1.100 SERVICE=ssh USER=root"; \
 	else \
-		docker exec cleo-kali-mcp /root/scripts/auto_bruteforce.sh \
-			$(TARGET) $(SERVICE) $(if $(USER),-u $(USER),); \
+		curl -s -X POST http://localhost:$${MCP_PORT:-3000}/api/bruteforce/hydra \
+			-H "Content-Type: application/json" \
+			-d '{"target":"$(TARGET)","service":"$(SERVICE)","username":"$(USER)"}' | jq .; \
 	fi

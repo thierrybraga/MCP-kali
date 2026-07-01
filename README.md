@@ -79,7 +79,7 @@ kali-mcp/
 ├── wordlists/
 ├── swagger.json
 ├── mcp_client.py
-└── pentest_automation.py
+└── pentest_pipeline.py
 ```
 
 ### 3. Build da imagem
@@ -141,6 +141,25 @@ O servidor MCP estará disponível em `http://localhost:3000`
 GET http://localhost:3000/
 GET http://localhost:3000/health
 GET http://localhost:3000/api/tools/list
+POST http://localhost:3000/mcp
+```
+
+**Endpoint MCP JSON-RPC**
+
+O endpoint `/mcp` implementa o fluxo MCP básico (`initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`):
+
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+Para ambientes fora de laboratório, ative autenticação:
+
+```bash
+MCP_REQUIRE_AUTH=true
+MCP_API_TOKEN=troque-este-token
+MCP_ALLOWED_ORIGINS=http://localhost:3000
 ```
 
 **Execução Genérica e Orquestração**
@@ -326,55 +345,45 @@ GET http://localhost:3000/api/reports/summary/:filename
 GET http://localhost:3000/api/artifacts
 ```
 
-### Scripts Automatizados
+### Pipelines Automatizados
 
 #### Full Network Reconnaissance
 
-Script completo de reconhecimento de rede:
+Pipeline de reconhecimento via API:
 
 ```bash
-# Dentro do container
-/root/scripts/full_recon.sh 192.168.1.0/24
-
-# Ou especificando diretório de output
-/root/scripts/full_recon.sh 192.168.1.0/24 /root/reports/empresa_x
+curl -X POST http://localhost:3000/api/tools/pipeline \
+  -H "Content-Type: application/json" \
+  -d '{
+    "steps": [
+      { "tool": "nmap", "target": "192.168.1.0/24", "options": "-sn" },
+      { "tool": "nmap", "target": "192.168.1.0/24", "options": "-sV -sC --top-ports 1000" }
+    ]
+  }'
 ```
 
 **O que faz:**
 
 1. Host Discovery (nmap ping scan)
-2. Port Scanning (masscan rápido)
-3. Service Detection (nmap -sV -sC)
-4. Vulnerability Scanning (nmap --script vuln)
-5. Web Enumeration (nikto)
-6. Gera relatório consolidado
+2. Service Detection (nmap -sV -sC)
+3. Gera relatórios individuais e artefatos indexados
 
 #### Automated Brute Force
 
 ```bash
-# SSH Brute Force
-/root/scripts/auto_bruteforce.sh 192.168.1.100 ssh -u root
-
-# FTP com wordlists customizadas
-/root/scripts/auto_bruteforce.sh 192.168.1.50 ftp -U users.txt -P passwords.txt
-
-# MySQL em porta customizada
-/root/scripts/auto_bruteforce.sh db.example.com mysql -u admin -s 3307 -t 32
-
-# HTTP POST Form
-/root/scripts/auto_bruteforce.sh example.com http-post-form \
-  -U users.txt -P passwords.txt
+curl -X POST http://localhost:3000/api/bruteforce/hydra \
+  -H "Content-Type: application/json" \
+  -d '{"target":"192.168.1.100","service":"ssh","username":"root"}'
 ```
 
 **Opções disponíveis:**
 
-- `-u` - Username único
-- `-U` - Arquivo com lista de usernames
-- `-p` - Password único
-- `-P` - Arquivo com lista de passwords
-- `-s` - Porta customizada
-- `-t` - Número de threads
-- `-o` - Arquivo de output
+- `username` - Username único
+- `userlist` - Arquivo com lista de usernames
+- `password` - Password único
+- `passlist` - Arquivo com lista de passwords
+- `port` - Porta customizada
+- `options` - Flags adicionais do Hydra
 
 ### Uso Manual das Ferramentas
 
@@ -573,14 +582,17 @@ docker-compose up -d
 
 ```bash
 # 1. Reconhecimento completo
-/root/scripts/full_recon.sh 10.0.0.0/24 /root/reports/empresa_abc
+curl -X POST http://localhost:3000/api/tools/pipeline \
+  -H "Content-Type: application/json" \
+  -d '{"steps":[{"tool":"nmap","target":"10.0.0.0/24","options":"-sn"},{"tool":"nmap","target":"10.0.0.0/24","options":"-sV -sC --top-ports 1000"}]}'
 
 # 2. Análise dos resultados
-cat /root/reports/empresa_abc/SUMMARY_REPORT.txt
+curl http://localhost:3000/api/reports
 
 # 3. Brute force em serviços encontrados
-/root/scripts/auto_bruteforce.sh 10.0.0.50 ssh -u admin
-/root/scripts/auto_bruteforce.sh 10.0.0.51 ftp -U users.txt
+curl -X POST http://localhost:3000/api/bruteforce/hydra \
+  -H "Content-Type: application/json" \
+  -d '{"target":"10.0.0.50","service":"ssh","username":"admin"}'
 
 # 4. Teste em aplicações web
 curl -X POST http://localhost:3000/api/web/nikto \

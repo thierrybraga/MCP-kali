@@ -46,6 +46,10 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/skills/../../etc/pa
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/skills/nmap;id")
 [ "$CODE" = "404" ] && pass "Special chars in skill name -> 404" || fail "Special chars skill" "got $CODE"
 
+echo "-- Report filename validation --"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/reports/..evil")
+[ "$CODE" = "400" ] && pass "Report traversal rejected -> 400" || fail "Report traversal" "got $CODE"
+
 echo "-- Rate limiting headers --"
 # Fazer múltiplas requisições para verificar que o servidor não crasha
 for i in {1..5}; do
@@ -55,10 +59,16 @@ done
 pass "Multiple requests to /health succeed"
 
 echo "-- CORS headers --"
-R=$(curl -si "$BASE_URL/health" 2>/dev/null | head -20)
-echo "$R" | grep -qi "Access-Control-Allow-Origin" \
-  && pass "CORS: Access-Control-Allow-Origin header present" \
-  || fail "CORS header" "not found"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Origin: http://evil.example" "$BASE_URL/health")
+[ "$CODE" = "403" ] && pass "CORS rejects untrusted origin" || fail "CORS untrusted origin" "got $CODE"
+
+R=$(curl -si -H "Origin: http://localhost:3000" "$BASE_URL/health" 2>/dev/null | head -20)
+echo "$R" | grep -qi "Access-Control-Allow-Origin: http://localhost:3000" \
+  && pass "CORS allows configured localhost origin" \
+  || fail "CORS localhost origin" "not allowed"
+echo "$R" | grep -q "Access-Control-Allow-Origin: \\*" \
+  && fail "CORS wildcard" "wildcard origin must not be used" \
+  || pass "CORS wildcard not present"
 
 echo ""
 echo "Results: PASS=$PASS FAIL=$FAIL"

@@ -23,7 +23,6 @@ wordlists/seclists/
 # Node modules
 node_modules/
 mcp-server/node_modules/
-package-lock.json
 
 # IDE
 .vscode/

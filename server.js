@@ -1,5 +1,5 @@
 const express = require("express");
-const { exec } = require("child_process");
+const { exec, execFile } = require("child_process");
 const util = require("util");
 const fs = require("fs").promises;
 const crypto = require("crypto");
@@ -7,6 +7,7 @@ const path = require("path");
 const os = require("os");
 
 const execPromise = util.promisify(exec);
+const execFilePromise = util.promisify(execFile);
 const app = express();
 const PORT = process.env.MCP_PORT || 3000;
 const HOST = process.env.MCP_HOST || "0.0.0.0";
@@ -60,16 +61,40 @@ const LLM_FALLBACK_MODEL = process.env.LLM_FALLBACK_MODEL || "";
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || "";
 const PERPLEXITY_MODEL = process.env.PERPLEXITY_MODEL || "sonar-reasoning-pro";
 const CAIPORA_TOOLS_PATH = process.env.CAIPORA_TOOLS_PATH || "/root/wordlists/caipora-tools.json";
+const MCP_PROTOCOL_VERSION = "2025-06-18";
+const MCP_API_TOKEN = process.env.MCP_API_TOKEN || process.env.API_TOKEN || "";
+const MCP_REQUIRE_AUTH = String(
+  process.env.MCP_REQUIRE_AUTH || (MCP_ENV === "production" ? "true" : "false")
+).toLowerCase() === "true";
+const MCP_ALLOWED_ORIGINS = (process.env.MCP_ALLOWED_ORIGINS || "http://localhost:3000,http://127.0.0.1:3000")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 // Middleware
+app.disable("x-powered-by");
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // CORS
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  const origin = req.get("Origin");
+  res.header("Vary", "Origin");
+  res.header("X-Content-Type-Options", "nosniff");
+  res.header("X-Frame-Options", "DENY");
+  res.header("Referrer-Policy", "no-referrer");
+  res.header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline' https://unpkg.com");
+  if (origin) {
+    if (!MCP_ALLOWED_ORIGINS.includes(origin)) {
+      return res.status(403).json({ success: false, error: "Origin not allowed" });
+    }
+    res.header("Access-Control-Allow-Origin", origin);
+  }
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-MCP-Token, MCP-Protocol-Version, Mcp-Session-Id");
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
   next();
 });
 
@@ -746,13 +771,58 @@ app.use((req, res, next) => {
   return next();
 });
 
+function isPublicPath(req) {
+  if (req.method === "OPTIONS") {
+    return true;
+  }
+  return [
+    "/",
+    "/health",
+    "/api-docs",
+    "/swagger.json",
+  ].includes(req.path);
+}
+
+function getRequestToken(req) {
+  const header = req.get("Authorization") || "";
+  if (header.toLowerCase().startsWith("bearer ")) {
+    return header.slice(7).trim();
+  }
+  return req.get("X-MCP-Token") || "";
+}
+
+function timingSafeEqualString(a, b) {
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+app.use((req, res, next) => {
+  if (!MCP_REQUIRE_AUTH || isPublicPath(req)) {
+    return next();
+  }
+  if (!MCP_API_TOKEN) {
+    return res.status(503).json({
+      success: false,
+      error: "MCP_API_TOKEN is required when MCP_REQUIRE_AUTH is enabled",
+    });
+  }
+  if (!timingSafeEqualString(getRequestToken(req), MCP_API_TOKEN)) {
+    return res.status(401).json({ success: false, error: "Unauthorized" });
+  }
+  return next();
+});
+
 const riskPolicy = {
   blockedTokens: ["&&", "||", ";", "|", "`", "$(", ">", "<", "\n", "\r"],
-  blockedPatterns: [/\/dev\/tcp/i, /\/dev\/udp/i],
+  blockedPatterns: [/\/dev\/tcp/i, /\/dev\/udp/i, /\x00/],
 };
 
 function assessRisk(command) {
   const reasons = [];
+  if (typeof command !== "string" || !command.trim()) {
+    return { allowed: false, reasons: ["invalid_command"] };
+  }
   for (const token of riskPolicy.blockedTokens) {
     if (command.includes(token)) {
       reasons.push(`blocked_token:${token}`);
@@ -764,6 +834,59 @@ function assessRisk(command) {
     }
   }
   return { allowed: reasons.length === 0, reasons };
+}
+
+function splitCommand(command) {
+  const args = [];
+  let current = "";
+  let quote = null;
+  let escaped = false;
+
+  for (const ch of command) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += ch;
+  }
+
+  if (escaped) {
+    current += "\\";
+  }
+  if (quote) {
+    throw new Error("Unclosed quote in command");
+  }
+  if (current) {
+    args.push(current);
+  }
+  if (!args.length) {
+    throw new Error("Empty command");
+  }
+  return args;
 }
 
 // Helper function para executar comandos de forma segura
@@ -779,10 +902,12 @@ async function executeCommand(command, timeout = 300000) {
     };
   }
   try {
-    logEvent("info", "command_start", { command, timeout });
-    const { stdout, stderr } = await execPromise(command, {
+    const [file, ...args] = splitCommand(command);
+    logEvent("info", "command_start", { command, file, args, timeout });
+    const { stdout, stderr } = await execFilePromise(file, args, {
       timeout,
       maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true,
     });
     logEvent("info", "command_end", { command, success: true });
     return { success: true, stdout, stderr, risk };
@@ -1215,7 +1340,25 @@ async function readSkillContent(skillName) {
   }
 }
 
+function safeReportPath(filename) {
+  if (!filename || typeof filename !== "string") {
+    return null;
+  }
+  if (!/^[A-Za-z0-9_.-]+$/.test(filename) || filename.includes("..")) {
+    return null;
+  }
+  const rootResolved = path.resolve(REPORTS_DIR);
+  const resolved = path.resolve(rootResolved, filename);
+  if (resolved !== rootResolved && !resolved.startsWith(rootResolved + path.sep)) {
+    return null;
+  }
+  return resolved;
+}
+
 const toolRunner = {
+  nmap: { template: "nmap {options} {target}", category: "scanning", description: "Network port scanner", requiresTarget: true },
+  masscan: { template: "masscan {target} {options}", category: "scanning", description: "Fast port scanner", requiresTarget: true },
+  hydra: { template: "hydra {options} {target}", category: "bruteforce", description: "Password brute force tool", requiresTarget: true },
   theharvester: { template: "theHarvester -d {target} {options}", category: "recon", description: "Email/domain harvesting", requiresTarget: true },
   "recon-ng": { template: "recon-ng {options}", category: "recon", description: "Reconnaissance framework", requiresTarget: false },
   dnsrecon: { template: "dnsrecon -d {target} {options}", category: "recon", description: "DNS enumeration", requiresTarget: true },
@@ -1240,6 +1383,16 @@ const toolRunner = {
   massdns: { template: "massdns {options} {target}", category: "recon", description: "DNS brute force", requiresTarget: true },
   paramspider: { template: "paramspider -d {target} {options}", category: "recon", description: "Parameter discovery", requiresTarget: true },
   arjun: { template: "arjun -u {target} {options}", category: "recon", description: "Parameter discovery", requiresTarget: true },
+  sqlmap: { template: "sqlmap -u {target} {options}", category: "web", description: "SQL injection tool", requiresTarget: true },
+  wpscan: { template: "wpscan --url {target} {options}", category: "web", description: "WordPress vulnerability scanner", requiresTarget: true },
+  nikto: { template: "nikto -h {target} {options}", category: "web", description: "Web server scanner", requiresTarget: true },
+  dirb: { template: "dirb {target} {options}", category: "web", description: "Directory brute force", requiresTarget: true },
+  gobuster: { template: "gobuster {options} {target}", category: "web", description: "URI/DNS brute force", requiresTarget: true },
+  httpx: { template: "httpx -u {target} {options}", category: "web", description: "HTTP probing toolkit", requiresTarget: true },
+  nuclei: { template: "nuclei -u {target} {options}", category: "web", description: "Template-based vulnerability scanner", requiresTarget: true },
+  ffuf: { template: "ffuf -u {target} {options}", category: "web", description: "Fast web fuzzer", requiresTarget: true },
+  feroxbuster: { template: "feroxbuster -u {target} {options}", category: "web", description: "Content discovery tool", requiresTarget: true },
+  dirsearch: { template: "dirsearch -u {target} {options}", category: "web", description: "Web path discovery", requiresTarget: true },
   joomscan: { template: "joomscan -u {target} {options}", category: "web", description: "Joomla scanner", requiresTarget: true },
   cmsmap: { template: "cmsmap {options} -t {target}", category: "web", description: "CMS scanner", requiresTarget: true },
   xsstrike: { template: "xsstrike -u {target} {options}", category: "web", description: "XSS scanner", requiresTarget: true },
@@ -1408,6 +1561,251 @@ async function runConfiguredTool({ tool, target, options, timeout = 900000 }) {
   return { command, result, report };
 }
 
+function jsonRpcResult(id, result) {
+  return { jsonrpc: "2.0", id, result };
+}
+
+function jsonRpcError(id, code, message, data) {
+  const error = { code, message };
+  if (typeof data !== "undefined") {
+    error.data = data;
+  }
+  return { jsonrpc: "2.0", id: id ?? null, error };
+}
+
+function makeMcpTool(name, config, skillNames) {
+  const properties = {
+    options: {
+      type: "string",
+      description: "Additional CLI options. Shell metacharacters are rejected.",
+      default: "",
+    },
+    dryRun: {
+      type: "boolean",
+      description: "Return the generated command and risk assessment without executing it.",
+      default: false,
+    },
+    timeout: {
+      type: "integer",
+      description: "Execution timeout in milliseconds.",
+      minimum: 1000,
+      maximum: 1800000,
+      default: 900000,
+    },
+  };
+  const required = [];
+  if (config.requiresTarget) {
+    properties.target = {
+      type: "string",
+      description: "Authorized target host, URL, network, file, or scope value for this tool.",
+    };
+    required.push("target");
+  } else {
+    properties.target = {
+      type: "string",
+      description: "Optional target or scope note for audit metadata.",
+    };
+  }
+  return {
+    name,
+    title: name,
+    description: config.description,
+    inputSchema: {
+      type: "object",
+      properties,
+      required,
+      additionalProperties: false,
+    },
+    annotations: {
+      destructiveHint: isHighRiskCategory(config.category),
+      openWorldHint: true,
+      readOnlyHint: false,
+    },
+    category: config.category,
+    tags: getTags(config.category),
+    skillAvailable: skillNames.has(name),
+  };
+}
+
+async function listMcpTools() {
+  const skillNames = new Set(await listSkillNames());
+  return Object.entries(toolRunner)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, config]) => makeMcpTool(name, config, skillNames));
+}
+
+function mcpToolResultFromPayload(payload, isError = false) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(payload, null, 2),
+      },
+    ],
+    structuredContent: payload,
+    isError,
+  };
+}
+
+async function callMcpTool(name, args = {}) {
+  const config = toolRunner[name];
+  if (!config) {
+    return { protocolError: jsonRpcError(null, -32602, `Unknown tool: ${name}`) };
+  }
+  const target = args.target || null;
+  const options = args.options || "";
+  const dryRun = Boolean(args.dryRun);
+  const timeout = Number(args.timeout || 900000);
+  if (config.requiresTarget && !target) {
+    return mcpToolResultFromPayload({ success: false, error: "Target is required", tool: name }, true);
+  }
+  const command = buildToolCommand(name, target, options);
+  const risk = assessRisk(command);
+  const mustDryRun = dryRun || (isProduction() && isHighRiskCategory(config.category));
+  if (mustDryRun || !risk.allowed) {
+    const payload = buildResponse({
+      success: risk.allowed,
+      tool: name,
+      target,
+      command,
+      result: { stdout: "", stderr: "", error: risk.allowed ? null : "Command rejected by risk policy" },
+      report: null,
+      artifacts: [],
+      meta: {
+        options,
+        dryRun: true,
+        risk,
+        env: isProduction() ? "production" : undefined,
+        policy: mustDryRun && !dryRun ? "dry_run_enforced" : undefined,
+      },
+    });
+    return mcpToolResultFromPayload(payload, !risk.allowed);
+  }
+  const executed = await runConfiguredTool({ tool: name, target, options, timeout });
+  if (executed.error) {
+    return mcpToolResultFromPayload({ success: false, tool: name, error: executed.error }, true);
+  }
+  const payload = buildResponse({
+    success: executed.result.success,
+    tool: name,
+    target,
+    command: executed.command,
+    result: executed.result,
+    report: executed.report.filename,
+    artifacts: [executed.report.artifact],
+    meta: { options },
+  });
+  return mcpToolResultFromPayload(payload, !executed.result.success);
+}
+
+async function listMcpResources() {
+  const skills = (await listSkillNames()).sort().map((name) => ({
+    uri: `skill://${encodeURIComponent(name)}`,
+    name: `Skill: ${name}`,
+    description: `Skill documentation for ${name}`,
+    mimeType: "text/markdown",
+  }));
+  let reports = [];
+  try {
+    const files = await fs.readdir(REPORTS_DIR);
+    reports = files
+      .filter((file) => safeReportPath(file))
+      .map((file) => ({
+        uri: `report://${encodeURIComponent(file)}`,
+        name: `Report: ${file}`,
+        description: "Saved execution report",
+        mimeType: "application/json",
+      }));
+  } catch (_error) {}
+  return skills.concat(reports);
+}
+
+async function readMcpResource(uri) {
+  if (typeof uri !== "string") {
+    throw new Error("Resource URI is required");
+  }
+  if (uri.startsWith("skill://")) {
+    const name = decodeURIComponent(uri.slice("skill://".length));
+    const result = await readSkillContent(name);
+    if (result.error) {
+      throw new Error(result.error);
+    }
+    return {
+      contents: [{ uri, mimeType: "text/markdown", text: result.content }],
+    };
+  }
+  if (uri.startsWith("report://")) {
+    const filename = decodeURIComponent(uri.slice("report://".length));
+    const filepath = safeReportPath(filename);
+    if (!filepath) {
+      throw new Error("Invalid report filename");
+    }
+    const content = await fs.readFile(filepath, "utf8");
+    return {
+      contents: [{ uri, mimeType: "application/json", text: content }],
+    };
+  }
+  throw new Error("Unsupported resource URI");
+}
+
+async function handleMcpMessage(message) {
+  if (!message || message.jsonrpc !== "2.0" || typeof message.method !== "string") {
+    return jsonRpcError(message?.id, -32600, "Invalid JSON-RPC request");
+  }
+  const id = message.id;
+  const params = message.params || {};
+  const isNotification = typeof id === "undefined";
+
+  try {
+    switch (message.method) {
+      case "initialize": {
+        return jsonRpcResult(id, {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: {
+            tools: { listChanged: true },
+            resources: { listChanged: true },
+            logging: {},
+          },
+          serverInfo: {
+            name: "kali-mcp-pentest-server",
+            title: "Kali MCP Pentest Server",
+            version: "1.0.0",
+          },
+          instructions: "Use only against authorized targets. Prefer dryRun before execution.",
+        });
+      }
+      case "notifications/initialized":
+        return null;
+      case "ping":
+        return jsonRpcResult(id, {});
+      case "tools/list":
+        return jsonRpcResult(id, { tools: await listMcpTools() });
+      case "tools/call": {
+        const result = await callMcpTool(params.name, params.arguments || {});
+        if (result.protocolError) {
+          result.protocolError.id = id;
+          return result.protocolError;
+        }
+        return jsonRpcResult(id, result);
+      }
+      case "resources/list":
+        return jsonRpcResult(id, { resources: await listMcpResources() });
+      case "resources/read":
+        return jsonRpcResult(id, await readMcpResource(params.uri));
+      default:
+        if (isNotification) {
+          return null;
+        }
+        return jsonRpcError(id, -32601, `Method not found: ${message.method}`);
+    }
+  } catch (error) {
+    if (isNotification) {
+      return null;
+    }
+    return jsonRpcError(id, -32603, error.message || "Internal MCP error");
+  }
+}
+
 // ==================== ROUTES ====================
 
 // Health check
@@ -1453,57 +1851,37 @@ app.get("/", (req, res) => {
       llmPlan: "/api/llm/plan",
       caiporaChat: "/api/caipora/chat",
       deepResearch: "/api/research/deep",
+      mcp: "/mcp",
     },
   });
 });
 
-// ==================== ONION SEARCH & TOR ====================
-
-app.post("/api/onion/search", async (req, res) => {
-  const { query, engine = "ahmia" } = req.body;
-  
-  if (!query) {
-    return res.status(400).json({ error: "Query is required" });
+app.post("/mcp", async (req, res) => {
+  const protocolVersion = req.get("MCP-Protocol-Version");
+  if (protocolVersion && protocolVersion !== MCP_PROTOCOL_VERSION) {
+    return res.status(400).json(jsonRpcError(req.body?.id, -32600, "Unsupported MCP protocol version", {
+      supported: MCP_PROTOCOL_VERSION,
+    }));
   }
 
-  const isTorRunning = await ensureTorRunning();
-  if (!isTorRunning) {
-    return res.status(500).json({ error: "Tor service is not running and could not be started" });
+  const payload = req.body;
+  if (Array.isArray(payload)) {
+    if (!payload.length) {
+      return res.status(400).json(jsonRpcError(null, -32600, "Empty JSON-RPC batch"));
+    }
+    const responses = (await Promise.all(payload.map((message) => handleMcpMessage(message))))
+      .filter((message) => message !== null);
+    if (!responses.length) {
+      return res.status(202).end();
+    }
+    return res.json(responses);
   }
 
-  let searchUrl;
-  switch (engine.toLowerCase()) {
-    case "ahmia":
-      searchUrl = `http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=${encodeURIComponent(query)}`;
-      break;
-    case "torch":
-      searchUrl = `http://xmh57jrknzkhv6y3ls3ubitzfqnkrwxhopf5ckg74owjquxqgyvk5gid.onion/search/?q=${encodeURIComponent(query)}`;
-      break;
-    case "haystak":
-      searchUrl = `http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/?q=${encodeURIComponent(query)}`;
-      break;
-    default:
-      return res.status(400).json({ error: "Unsupported engine. Use: ahmia, torch, haystak" });
+  const response = await handleMcpMessage(payload);
+  if (response === null) {
+    return res.status(202).end();
   }
-
-  const result = await fetchViaTor(searchUrl);
-  if (!result.success) {
-    return res.status(500).json({ 
-      error: "Tor fetch failed", 
-      details: result.stderr 
-    });
-  }
-
-  // Parse results based on engine (basic implementation)
-  const links = extractLinks(result.stdout).filter(l => l.includes(".onion"));
-  
-  return res.json({
-    success: true,
-    engine,
-    query,
-    links: links.slice(0, 50), // Limit results
-    raw_html_length: result.stdout.length
-  });
+  return res.json(response);
 });
 
 // ==================== PERPLEXITY DEEP RESEARCH ====================
@@ -1775,13 +2153,12 @@ app.post("/api/bruteforce/hydra", async (req, res) => {
     target,
     service,
     username,
-    userlist,
     password,
-    passlist = "/root/wordlists/rockyou.txt",
     port,
     options = "",
     profile = "",
   } = req.body;
+  let { userlist, passlist } = req.body;
 
   if (!target || !service) {
     return res.status(400).json({ error: "Target and service are required" });
@@ -1794,6 +2171,9 @@ app.post("/api/bruteforce/hydra", async (req, res) => {
   }
   if (!password && !passlist && await fileExists(localPasswords)) {
     passlist = localPasswords;
+  }
+  if (!password && !passlist) {
+    passlist = "/root/wordlists/rockyou.txt";
   }
 
   const hydraProfile = profileOptions("hydra", profile);
@@ -2586,45 +2966,53 @@ app.get("/api/tools/list", async (req, res) => {
     { name: "2captcha", category: "automation", description: "Solve CAPTCHAs" },
   ];
 
-  const extendedTools = Object.entries(toolRunner).map(([name, config]) => ({
-    name,
-    category: config.category,
-    description: config.description,
-    tags: getTags(config.category),
-    examples: [toolRunExample(name)],
-    skillAvailable: skillNames.has(name),
-    skillEndpoint: `/api/skills/${name}`,
-    skillStatus: skillNames.has(name) ? "ok" : "missing",
-  }));
+  const toolMap = new Map();
+  for (const tool of tools) {
+    toolMap.set(tool.name, tool);
+  }
+  for (const [name, config] of Object.entries(toolRunner)) {
+    toolMap.set(name, {
+      name,
+      category: config.category,
+      description: config.description,
+    });
+  }
 
-  const baseTools = tools.map((tool) => ({
+  const responseTools = Array.from(toolMap.values()).map((tool) => ({
     ...tool,
     tags: getTags(tool.category),
     examples: [toolRunExample(tool.name)],
     skillAvailable: skillNames.has(tool.name),
     skillEndpoint: `/api/skills/${tool.name}`,
     skillStatus: skillNames.has(tool.name) ? "ok" : "missing",
-  }));
+  })).sort((a, b) => a.name.localeCompare(b.name));
 
-  res.json({ tools: baseTools.concat(extendedTools) });
+  res.json({ tools: responseTools });
 });
 
 // ==================== REPORTS ====================
 app.get("/api/reports", async (req, res) => {
   try {
     const files = await fs.readdir(REPORTS_DIR);
-    const reports = await Promise.all(
-      files.map(async (file) => {
-        const filePath = path.join(REPORTS_DIR, file);
+    const reports = [];
+    for (const file of files) {
+      const filePath = safeReportPath(file);
+      if (!filePath) {
+        continue;
+      }
+      try {
         const stats = await fs.stat(filePath);
-        return {
+        if (!stats.isFile()) {
+          continue;
+        }
+        reports.push({
           name: file,
           path: filePath,
           size: stats.size,
           modifiedAt: stats.mtime.toISOString(),
-        };
-      })
-    );
+        });
+      } catch (_error) {}
+    }
     res.json({ reports });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -2633,7 +3021,10 @@ app.get("/api/reports", async (req, res) => {
 
 app.get("/api/reports/summary/:filename", async (req, res) => {
   try {
-    const filepath = path.join(REPORTS_DIR, req.params.filename);
+    const filepath = safeReportPath(req.params.filename);
+    if (!filepath) {
+      return res.status(400).json({ error: "Invalid report filename" });
+    }
     const content = await fs.readFile(filepath, "utf8");
     let summary = "";
     let truncated = false;
@@ -2682,7 +3073,10 @@ app.get("/api/reports/summary/:filename", async (req, res) => {
 
 app.get("/api/reports/:filename", async (req, res) => {
   try {
-    const filepath = path.join(REPORTS_DIR, req.params.filename);
+    const filepath = safeReportPath(req.params.filename);
+    if (!filepath) {
+      return res.status(400).json({ error: "Invalid report filename" });
+    }
     const content = await fs.readFile(filepath, "utf8");
     res.json({ filename: req.params.filename, content });
   } catch (error) {

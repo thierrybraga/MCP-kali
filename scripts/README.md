@@ -37,6 +37,7 @@ SKIP_SLOW=1 ./run-all-tests.sh
 |--------|-----------|
 | `test-health.sh` | Verifica saúde do servidor (`/health`) |
 | `test-skills.sh` | Verifica listagem e detalhes de skills |
+| `test-mcp.sh` | Verifica endpoint MCP JSON-RPC (`/mcp`) |
 | `test-tools-generic.sh` | Testa dry-run para dezenas de ferramentas |
 | `test-nmap.sh` | Testa execução real e dry-run do Nmap |
 | `test-web.sh` | Testa ferramentas web (nikto, gobuster, sqlmap) |
