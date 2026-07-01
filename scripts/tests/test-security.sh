@@ -5,8 +5,8 @@ set -euo pipefail
 BASE_URL="${MCP_BASE_URL:-http://localhost:3000}"
 PASS=0; FAIL=0
 
-pass() { echo "[PASS] $1"; ((PASS++)); }
-fail() { echo "[FAIL] $1: $2"; ((FAIL++)); }
+pass() { echo "[PASS] $1"; ((PASS+=1)); }
+fail() { echo "[FAIL] $1: $2"; ((FAIL+=1)); }
 
 reject_check() {
   local name="$1"

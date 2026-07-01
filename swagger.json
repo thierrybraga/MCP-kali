@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Kali MCP Pentest Server API",
-    "description": "API RESTful para automação de ferramentas de penetration testing via MCP (Model Context Protocol). Controla 100+ ferramentas de segurança do Kali Linux.\n\n## Autenticação\nAtualmente sem autenticação (uso interno em container Docker).\n\n## Rate Limiting\n120 requests/60s por IP:path.\n\n## Notas de Segurança\n- Apenas para uso em ambientes autorizados\n- Comandos passam por filtro de risco antes da execução\n- Todos os resultados são persistidos em /root/reports/",
+    "description": "API RESTful e endpoint MCP JSON-RPC para automação de ferramentas de penetration testing. Controla 100+ ferramentas de segurança do Kali Linux.\n\n## Autenticação\nOpcional em laboratório e recomendada/obrigável em produção via MCP_REQUIRE_AUTH=true e MCP_API_TOKEN.\n\n## Rate Limiting\n120 requests/60s por IP:path.\n\n## Notas de Segurança\n- Apenas para uso em ambientes autorizados\n- Comandos passam por filtro de risco antes da execução e são executados sem shell\n- Todos os resultados são persistidos em /root/reports/",
     "version": "1.0.0",
     "contact": {
       "name": "Thierry Braga"

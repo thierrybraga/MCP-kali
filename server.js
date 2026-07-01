@@ -841,11 +841,13 @@ function splitCommand(command) {
   let current = "";
   let quote = null;
   let escaped = false;
+  let tokenStarted = false;
 
   for (const ch of command) {
     if (escaped) {
       current += ch;
       escaped = false;
+      tokenStarted = true;
       continue;
     }
     if (ch === "\\" && quote !== "'") {
@@ -862,25 +864,29 @@ function splitCommand(command) {
     }
     if (ch === "'" || ch === '"') {
       quote = ch;
+      tokenStarted = true;
       continue;
     }
     if (/\s/.test(ch)) {
-      if (current) {
+      if (tokenStarted) {
         args.push(current);
         current = "";
+        tokenStarted = false;
       }
       continue;
     }
     current += ch;
+    tokenStarted = true;
   }
 
   if (escaped) {
     current += "\\";
+    tokenStarted = true;
   }
   if (quote) {
     throw new Error("Unclosed quote in command");
   }
-  if (current) {
+  if (tokenStarted) {
     args.push(current);
   }
   if (!args.length) {
@@ -940,17 +946,20 @@ async function ensureTorRunning() {
   }
 }
 
-function buildTorCurlCommand(url, timeoutSec = 60) {
+function buildTorCurlArgs(url, timeoutSec = 60) {
   const userAgent = "Mozilla/5.0 (X11; Linux x86_64)";
   return [
-    "curl",
     "-sL",
-    `--socks5-hostname ${TOR_SOCKS_HOST}:${TOR_SOCKS_PORT}`,
-    `--max-time ${timeoutSec}`,
-    "--connect-timeout 20",
-    `-A "${userAgent}"`,
-    `"${url}"`,
-  ].join(" ");
+    "--socks5-hostname",
+    `${TOR_SOCKS_HOST}:${TOR_SOCKS_PORT}`,
+    "--max-time",
+    String(timeoutSec),
+    "--connect-timeout",
+    "20",
+    "-A",
+    userAgent,
+    url,
+  ];
 }
 
 function isValidOnionUrl(value) {
@@ -963,11 +972,12 @@ function isValidOnionUrl(value) {
 }
 
 async function fetchViaTor(url, timeoutSec = 60) {
-  const command = buildTorCurlCommand(url, timeoutSec);
+  const args = buildTorCurlArgs(url, timeoutSec);
   try {
-    const { stdout, stderr } = await execPromise(command, {
+    const { stdout, stderr } = await execFilePromise("curl", args, {
       timeout: timeoutSec * 1000,
       maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true,
     });
     return { success: true, stdout, stderr };
   } catch (error) {

@@ -59,28 +59,39 @@ ls -lh /root/wordlists/
 ### Reconhecimento Automático
 
 ```bash
-# Dentro do container
-/root/scripts/full_recon.sh 192.168.1.0/24
-
 # Via Makefile (do host)
 make recon TARGET=192.168.1.0/24
+
+# Ou diretamente via API
+curl -X POST http://localhost:3000/api/tools/pipeline \
+  -H "Content-Type: application/json" \
+  -d '{"steps":[{"tool":"nmap","target":"192.168.1.0/24","options":"-sn"},{"tool":"nmap","target":"192.168.1.0/24","options":"-sV -sC --top-ports 1000"}]}'
 ```
 
 ### Brute Force SSH
 
 ```bash
-# Dentro do container
-/root/scripts/auto_bruteforce.sh 192.168.1.100 ssh -u root
-
 # Via Makefile (do host)
 make bruteforce TARGET=192.168.1.100 SERVICE=ssh USER=root
+
+# Ou diretamente via API
+curl -X POST http://localhost:3000/api/bruteforce/hydra \
+  -H "Content-Type: application/json" \
+  -d '{"target":"192.168.1.100","service":"ssh","username":"root"}'
 ```
 
-### Scan com Python
+### Cliente Python
 
 ```bash
-# Dentro do container
-python3 /root/scripts/pentest_automation.py -t 192.168.1.100
+python3 pentest_pipeline.py
+```
+
+### MCP JSON-RPC
+
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
 ## 🔥 Comandos Úteis
@@ -208,8 +219,9 @@ make bruteforce TARGET=192.168.1.100 SERVICE=ssh USER=admin
 make bruteforce TARGET=192.168.1.100 SERVICE=ftp USER=anonymous
 
 # MySQL
-docker exec cleo-kali-mcp /root/scripts/auto_bruteforce.sh \
-  192.168.1.100 mysql -u root -s 3306
+curl -X POST http://localhost:3000/api/bruteforce/hydra \
+  -H "Content-Type: application/json" \
+  -d '{"target":"192.168.1.100","service":"mysql","username":"root","port":3306}'
 ```
 
 ### 4. Recon e Bug Bounty (exemplos rápidos)
@@ -237,7 +249,7 @@ curl -X POST http://localhost:3000/api/tools/run \
 /root/scripts/          # Scripts de automação
 /root/wordlists/        # Wordlists
 /root/nmap-results/     # Resultados do nmap
-/opt/mcp-server/        # Servidor MCP
+/opt/mcp-server/        # Servidor REST/MCP
 ```
 
 ### No Host (volumes)
@@ -260,7 +272,7 @@ curl -X POST http://localhost:3000/api/tools/run \
 
 ### Boas Práticas
 
-1. Configure `.env` com senhas fortes
+1. Configure `.env` com senhas fortes e `MCP_REQUIRE_AUTH=true` fora de laboratório
 2. Limite recursos do container
 3. Use network bridge (não host)
 4. Faça backup regular dos reports
@@ -271,7 +283,7 @@ curl -X POST http://localhost:3000/api/tools/run \
 1. **Customize Scripts**: Edite `/root/scripts/` para suas necessidades
 2. **Configure Wordlists**: Adicione suas próprias em `./wordlists/`
 3. **Explore API**: Leia `README.md` para todos os endpoints
-4. **Automatize**: Use Python client em `scripts/mcp_client.py`
+4. **Automatize**: Use Python client em `mcp_client.py`
 5. **Integre**: Conecte com suas ferramentas de CI/CD
 
 ## 🆘 Precisa de Ajuda?
@@ -284,7 +296,7 @@ cat README.md
 make help
 
 # Ver exemplos de API
-cat scripts/mcp_client.py
+cat mcp_client.py
 
 # Logs detalhados
 make logs
